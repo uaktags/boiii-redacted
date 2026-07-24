@@ -24,6 +24,7 @@
   - [Port Forwarding Alternatives](#port-forwarding-alternatives)
 - [Zombies Server Setup](#zombies-server-setup)
 - [Compile from Source](#compile-from-source)
+- [Developer and Reverse-Engineering Handoff](#developer-and-reverse-engineering-handoff)
 - [GSC Scripting Additions](#gsc-scripting-additions)
 - [Credits](#credits)
 - [Disclaimer](#disclaimer)
@@ -405,6 +406,17 @@ Want to build Ezz BOIII yourself? Here's how! 🔨
    - Output will be in `build/bin/x64/Release/`
 
 > [!TIP] You can also use `build.bat` to compile directly from the command line!
+
+---
+
+## Developer and Reverse-Engineering Handoff
+
+For reproducible cross-compilation, the current source map, Ghidra program
+paths, ext.dll/t7patch.dll architecture, and unresolved security gaps, see
+[docs/worker-handoff.md](docs/worker-handoff.md).
+
+The detailed binary mapping is maintained in
+[docs/ext-t7patch-security-map.md](docs/ext-t7patch-security-map.md).
 
 ---
 

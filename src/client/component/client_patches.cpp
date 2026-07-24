@@ -53,23 +53,63 @@ void preload_map_stub(game::LocalClientNum_t local_client_num,
   preload_map_hook.invoke(local_client_num, mapname, gametype);
 }
 
-void reduce_process_affinity() {
-  const DWORD_PTR affinity =
-      (1ULL << (std::min(std::thread::hardware_concurrency(), 4U))) - 1;
-  SetProcessAffinityMask(GetCurrentProcess(), affinity);
+DWORD_PTR original_process_affinity{};
+std::atomic_bool process_affinity_reduced{false};
+
+bool reduce_process_affinity() {
+  if (process_affinity_reduced.exchange(true)) {
+    return false;
+  }
+
+  DWORD_PTR process_affinity{};
+  DWORD_PTR system_affinity{};
+  if (!GetProcessAffinityMask(GetCurrentProcess(), &process_affinity,
+                              &system_affinity) ||
+      process_affinity == 0) {
+    process_affinity_reduced = false;
+    return false;
+  }
+
+  DWORD_PTR reduced_affinity{};
+  unsigned int selected_cpus = 0;
+  for (unsigned int bit = 0; bit < sizeof(DWORD_PTR) * 8 && selected_cpus < 4;
+       ++bit) {
+    const DWORD_PTR cpu = static_cast<DWORD_PTR>(1) << bit;
+    if ((process_affinity & cpu) != 0) {
+      reduced_affinity |= cpu;
+      ++selected_cpus;
+    }
+  }
+
+  if (reduced_affinity == 0 || reduced_affinity == process_affinity ||
+      !SetProcessAffinityMask(GetCurrentProcess(), reduced_affinity)) {
+    process_affinity_reduced = false;
+    return false;
+  }
+
+  original_process_affinity = process_affinity;
+  return true;
 }
 
 void reset_process_affinity() {
-  DWORD_PTR affinity_proc, affinity_sys;
-  GetProcessAffinityMask(GetCurrentProcess(), &affinity_proc, &affinity_sys);
-  SetProcessAffinityMask(GetCurrentProcess(), affinity_sys);
+  if (!process_affinity_reduced.exchange(false)) {
+    return;
+  }
+
+  const DWORD_PTR affinity = original_process_affinity;
+  original_process_affinity = 0;
+  if (affinity != 0) {
+    SetProcessAffinityMask(GetCurrentProcess(), affinity);
+  }
 }
 
 void fix_amd_cpu_stuttering() {
   scheduler::once(
       [] {
-        reduce_process_affinity();
-        scheduler::once(reset_process_affinity, scheduler::pipeline::main, 1s);
+        if (reduce_process_affinity()) {
+          scheduler::once(reset_process_affinity, scheduler::pipeline::main,
+                          1s);
+        }
       },
       scheduler::pipeline::main);
 }

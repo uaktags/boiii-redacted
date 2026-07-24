@@ -3,6 +3,7 @@
 #include "friends.hpp"
 
 #include <game/utils.hpp>
+#include "auth.hpp"
 #include "network.hpp"
 #include "party.hpp"
 #include "scheduler.hpp"
@@ -27,6 +28,60 @@ constexpr int MAX_FRIENDS = 200;
 std::mutex public_ip_mutex;
 std::string cached_public_ip;
 std::atomic_bool public_ip_fetched{false};
+std::atomic_bool friends_only_enabled{false};
+utils::concurrency::container<std::unordered_map<uint64_t, game::XUID>>
+    authenticated_friend_xuids{};
+
+void load_friends_only_setting() {
+  const auto path = std::filesystem::path("boiii_players") / "user" /
+                    "launcher_settings.json";
+  std::string data;
+  if (!utils::io::read_file(path.string(), &data)) {
+    return;
+  }
+
+  rapidjson::Document document;
+  if (document.Parse(data.c_str()).HasParseError() || !document.IsObject()) {
+    return;
+  }
+
+  const auto setting = document.FindMember("friends_only");
+  if (setting != document.MemberEnd()) {
+    if (setting->value.IsString()) {
+      const std::string_view val = setting->value.GetString();
+      friends_only_enabled = val == "1" || val == "true";
+    } else if (setting->value.IsBool()) {
+      friends_only_enabled = setting->value.GetBool();
+    } else if (setting->value.IsInt()) {
+      friends_only_enabled = setting->value.GetInt() == 1;
+    }
+  }
+}
+
+void refresh_authenticated_friend_xuids() {
+  std::unordered_map<uint64_t, game::XUID> xuids;
+  steam_proxy::access_steam_friends(
+      [&xuids](const std::vector<std::pair<uint64_t, std::string>> &friends) {
+        for (const auto &friend_entry : friends) {
+          const uint64_t steam_id = friend_entry.first;
+          steam_proxy::request_friend_rich_presence(steam_id);
+          const std::string value = steam_proxy::get_friend_rich_presence(
+              steam_id, "boiii_xuid");
+          if (value.empty()) {
+            continue;
+          }
+
+          char *end = nullptr;
+          const game::XUID xuid = strtoull(value.c_str(), &end, 16);
+          if (xuid != 0 && end != value.c_str() && *end == '\0') {
+            xuids[steam_id] = xuid;
+          }
+        }
+      });
+
+  authenticated_friend_xuids.access(
+      [&xuids](auto &cached_xuids) { cached_xuids = std::move(xuids); });
+}
 
 // Helper to find VPN/Virtual LAN IPs (Radmin, Hamachi)
 std::string get_preferred_local_ip() {
@@ -542,11 +597,31 @@ bool connect_to_friend(game::XUID steam_id) {
   return false;
 }
 
+bool is_friends_only_enabled() { return friends_only_enabled.load(); }
+
+bool is_authenticated_friend(const game::XUID xuid) {
+  return authenticated_friend_xuids.access<bool>(
+      [xuid](const auto &xuids) {
+        return std::ranges::any_of(xuids, [xuid](const auto &entry) {
+          return entry.second == xuid;
+        });
+      });
+}
+
 struct component final : client_component {
   void post_unpack() override {
     load_friends();
+    load_friends_only_setting();
 
     scheduler::once([] { fetch_public_ip(); }, scheduler::async, 2000ms);
+    scheduler::once(
+        [] {
+          steam_proxy::set_rich_presence(
+              "boiii_xuid", utils::string::va("%llX", auth::get_guid()));
+        },
+        scheduler::main);
+    scheduler::once(refresh_authenticated_friend_xuids, scheduler::async,
+                    1000ms);
 
     // Poll for incoming Steam invites via callback 337
     scheduler::loop(
@@ -650,6 +725,8 @@ struct component final : client_component {
           try {
             const std::string addr = get_own_connect_address();
             steam_proxy::set_rich_presence("connect", addr);
+            steam_proxy::set_rich_presence(
+                "boiii_xuid", utils::string::va("%llX", auth::get_guid()));
 
             if (!addr.empty() && game::com::Com_IsInGame()) {
               const std::string_view mapname = game::get_mapname().value_or("");
@@ -677,6 +754,15 @@ struct component final : client_component {
           }
         },
         scheduler::main, 10000ms);
+
+    scheduler::loop(
+        [] {
+          try {
+            refresh_authenticated_friend_xuids();
+          } catch (...) {
+          }
+        },
+        scheduler::async, 15000ms);
 
     // Refresh friend online status via their rich presence
     scheduler::loop(

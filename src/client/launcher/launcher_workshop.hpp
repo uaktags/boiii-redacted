@@ -4,7 +4,7 @@
 #include <map>
 #include <string>
 #include <vector>
-#include <atlbase.h>
+#include <utils/com.hpp>
 
 class html_frame;
 

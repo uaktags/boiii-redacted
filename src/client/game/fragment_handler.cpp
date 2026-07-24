@@ -4,6 +4,8 @@
 namespace game::fragment_handler {
 namespace {
 constexpr size_t MAX_FRAGMENTS = 100;
+constexpr size_t MAX_FRAGMENT_SIZE = 0x400;
+constexpr size_t MAX_PACKET_SIZE = MAX_FRAGMENTS * MAX_FRAGMENT_SIZE;
 
 using fragments = std::unordered_map<size_t, std::string>;
 
@@ -23,10 +25,9 @@ std::vector<std::string> construct_fragments(const void *data,
                                              const size_t length) {
   std::vector<std::string> fragments{};
 
-  constexpr size_t max_fragment_size = 0x400;
-
-  for (size_t i = 0; i < length; i += max_fragment_size) {
-    const auto current_fragment_size = std::min(length - i, max_fragment_size);
+  for (size_t i = 0; i < length; i += MAX_FRAGMENT_SIZE) {
+    const auto current_fragment_size =
+        std::min(length - i, MAX_FRAGMENT_SIZE);
 
     std::string fragment(static_cast<const char *>(data) + i,
                          current_fragment_size);
@@ -39,50 +40,67 @@ std::vector<std::string> construct_fragments(const void *data,
 
 bool handle(const net::netadr_t &target, utils::byte_buffer &buffer,
             std::string &final_packet) {
-  const auto fragment_id = buffer.read<uint64_t>();
-  const size_t fragment_count = buffer.read<uint32_t>();
-  const size_t fragment_index = buffer.read<uint32_t>();
+  try {
+    const auto fragment_id = buffer.read<uint64_t>();
+    const size_t fragment_count = buffer.read<uint32_t>();
+    const size_t fragment_index = buffer.read<uint32_t>();
+    auto fragment_data = buffer.get_remaining_data();
 
-  auto fragment_data = buffer.get_remaining_data();
-
-  if (fragment_index > fragment_count || !fragment_count ||
-      fragment_count > MAX_FRAGMENTS) {
-    return false;
-  }
-
-  return global_map.access<bool>([&](address_fragment_map &map) {
-    auto &user_map = map[target];
-    if (!user_map.contains(fragment_id) && user_map.size() > MAX_FRAGMENTS) {
+    if (fragment_index >= fragment_count || !fragment_count ||
+        fragment_count > MAX_FRAGMENTS ||
+        fragment_data.size() > MAX_FRAGMENT_SIZE) {
       return false;
     }
 
-    auto &packet_queue = user_map[fragment_id];
+    return global_map.access<bool>([&](address_fragment_map &map) {
+      auto map_entry = map.try_emplace(target).first;
+      auto &user_map = map_entry->second;
+      if (!user_map.contains(fragment_id) &&
+          user_map.size() >= MAX_FRAGMENTS) {
+        return false;
+      }
 
-    if (packet_queue.fragment_count == 0) {
-      packet_queue.fragment_count = fragment_count;
-    }
+      auto queue_entry = user_map.try_emplace(fragment_id).first;
+      auto &packet_queue = queue_entry->second;
+      if (packet_queue.fragment_count == 0) {
+        packet_queue.fragment_count = fragment_count;
+      }
 
-    if (packet_queue.fragment_count != fragment_count) {
-      return false;
-    }
+      if (packet_queue.fragment_count != fragment_count ||
+          packet_queue.fragments.contains(fragment_index)) {
+        return false;
+      }
 
-    if (packet_queue.fragments.size() + 1 < fragment_count) {
-      packet_queue.fragments[fragment_index] = std::move(fragment_data);
-      return false;
-    }
+      packet_queue.fragments.emplace(fragment_index, std::move(fragment_data));
+      if (packet_queue.fragments.size() != fragment_count) {
+        return false;
+      }
 
-    final_packet.clear();
+      size_t packet_size = 0;
+      for (size_t i = 0; i < fragment_count; ++i) {
+        const auto fragment = packet_queue.fragments.find(i);
+        if (fragment == packet_queue.fragments.end() ||
+            fragment->second.size() > MAX_PACKET_SIZE - packet_size) {
+          return false;
+        }
+        packet_size += fragment->second.size();
+      }
 
-    for (size_t i = 0; i < fragment_count; ++i) {
-      if (i == fragment_index) {
-        final_packet.append(fragment_data);
-      } else {
+      final_packet.clear();
+      final_packet.reserve(packet_size);
+      for (size_t i = 0; i < fragment_count; ++i) {
         final_packet.append(packet_queue.fragments.at(i));
       }
-    }
 
-    return true;
-  });
+      user_map.erase(queue_entry);
+      if (user_map.empty()) {
+        map.erase(map_entry);
+      }
+      return true;
+    });
+  } catch (const std::exception &) {
+    return false;
+  }
 }
 
 void clean() {

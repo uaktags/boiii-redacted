@@ -259,7 +259,8 @@ void raise_hard_exception() {
 }
 
 std::string load_resource(const int id) {
-  const auto lib = library::get_by_address(load_resource);
+  const auto lib =
+      library::get_by_address(reinterpret_cast<const void *>(load_resource));
   auto *const res = FindResource(lib, MAKEINTRESOURCE(id), RT_RCDATA);
   if (!res)
     return {};
@@ -273,7 +274,8 @@ std::string load_resource(const int id) {
 }
 
 void relaunch_self() {
-  const auto self = library::get_by_address(relaunch_self);
+  const auto self =
+      library::get_by_address(reinterpret_cast<const void *>(relaunch_self));
 
   STARTUPINFOA startup_info;
   PROCESS_INFORMATION process_info;

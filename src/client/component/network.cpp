@@ -6,6 +6,7 @@
 
 #include "command.hpp"
 #include "network.hpp"
+#include "network_password.hpp"
 #include "scheduler.hpp"
 
 #include <utils/hook.hpp>
@@ -15,11 +16,15 @@
 #include <string>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace network {
 namespace {
 utils::hook::detour handle_packet_internal_hook{};
+std::mutex protected_addresses_mutex;
+std::unordered_set<game::net::netadr_t> protected_addresses{};
 
 std::unordered_map<std::string, callback> &get_callbacks() {
   static std::unordered_map<std::string, callback> callbacks{};
@@ -29,21 +34,61 @@ std::unordered_map<std::string, callback> &get_callbacks() {
 int64_t handle_command(const game::net::netadr_t *address, const char *command,
                        const game::net::msg::msg_t *message,
                        game::LocalClientNum_t localClientNum) {
-
-  const std::string cmd_string = utils::string::to_lower(command);
-  std::unordered_map<std::string, callback> &callbacks = get_callbacks();
-  const size_t offset = cmd_string.size() + 5;
-
-  if (message->cursize < 0 || static_cast<size_t>(message->cursize) < offset ||
-      !callbacks.contains(cmd_string)) {
+  if (address == nullptr || command == nullptr || message == nullptr) {
     return true;
   }
 
-  const std::basic_string_view data(message->data + offset,
-                                    message->cursize - offset);
+  const std::string cmd_string = utils::string::to_lower(command);
+  std::unordered_map<std::string, callback> &callbacks = get_callbacks();
+  const auto callback_entry = callbacks.find(cmd_string);
+  const size_t offset = cmd_string.size() + 5;
+
+  if (message->data == nullptr || message->cursize < 0 ||
+      static_cast<size_t>(message->cursize) < offset) {
+    return true;
+  }
+
+  bool protected_packet = false;
+  {
+    std::lock_guard lock(protected_addresses_mutex);
+    protected_packet = protected_addresses.contains(*address);
+  }
+
+  protected_packet = network_password::is_password_set() &&
+                     (protected_packet || cmd_string == "connect");
+
+  if (callback_entry == callbacks.end() && protected_packet) {
+    return false;
+  }
+
+  if (callback_entry == callbacks.end()) {
+    return true;
+  }
+
+  const uint8_t *data_start = message->data + offset;
+  size_t data_length = static_cast<size_t>(message->cursize) - offset;
+
+  if (protected_packet) {
+    size_t payload_length = 0;
+    if (!network_password::validate_packet(
+            message->data, static_cast<size_t>(message->cursize), offset,
+            payload_length)) {
+      return false;
+    }
+
+    const size_t marker_length = network_password::marker_size();
+    if (payload_length < offset + marker_length) {
+      return false;
+    }
+
+    data_start += marker_length;
+    data_length = payload_length - offset - marker_length;
+  }
+
+  const std::basic_string_view data(data_start, data_length);
 
   try {
-    callbacks[cmd_string](*address, data, localClientNum);
+    callback_entry->second(*address, data, localClientNum);
   } catch (const std::exception &e) {
     printf("Error: %s\n", e.what());
   } catch (...) {
@@ -209,7 +254,27 @@ void send(const game::net::netadr_t &address, const std::string &command,
   packet.push_back(separator);
   packet.append(data);
 
+  bool protected_packet = false;
+  {
+    std::lock_guard lock(protected_addresses_mutex);
+    protected_packet = protected_addresses.contains(address);
+  }
+
+  if (network_password::is_password_set() && protected_packet) {
+    packet = network_password::protect_packet(packet, command.size() + 5);
+  }
+
   send_data(address, packet);
+}
+
+void set_packet_protection(const game::net::netadr_t &address,
+                           const bool enabled) {
+  std::lock_guard lock(protected_addresses_mutex);
+  if (enabled) {
+    protected_addresses.insert(address);
+  } else {
+    protected_addresses.erase(address);
+  }
 }
 
 sockaddr_in convert_to_sockaddr(const game::net::netadr_t &address) {

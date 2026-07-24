@@ -140,7 +140,7 @@ void copy_folder(const std::filesystem::path &src,
 
 std::size_t file_size(const std::wstring &file) {
   if (file_exists(file)) {
-    std::ifstream stream(file, std::ios::binary);
+    std::ifstream stream(std::filesystem::path(file), std::ios::binary);
 
     if (stream.good()) {
       stream.seekg(0, std::ios::end);

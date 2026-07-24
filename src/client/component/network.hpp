@@ -9,6 +9,7 @@ typedef std::function<void(const game::net::netadr_t &, const data_view &,
     callback;
 
 void on(const std::string &command, const callback &callback);
+void set_packet_protection(const game::net::netadr_t &address, bool enabled);
 void send(const game::net::netadr_t &address, const std::string &command,
           const std::string &data = {}, char separator = ' ');
 

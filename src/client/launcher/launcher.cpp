@@ -40,8 +40,8 @@
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 
-#pragma comment(lib, "Shell32.lib")
-#pragma comment(lib, "Shlwapi.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "shlwapi.lib")
 
 namespace launcher {
 namespace {
@@ -2141,8 +2141,7 @@ bool run() {
         }
 
         if (key == "friendsOnly") {
-          // Store friends-only in launcher_settings.json (no game-side
-          // equivalent)
+          // The game-side admission policy reads this setting at startup.
           const auto path = std::filesystem::path("boiii_players") / "user" /
                             "launcher_settings.json";
           std::error_code ec;

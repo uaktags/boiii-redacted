@@ -4,6 +4,7 @@
 #include <game/game.hpp>
 #include <steam/steam.hpp>
 
+#include "friends.hpp"
 #include "network.hpp"
 #include "network_password.hpp"
 #include "workshop.hpp"
@@ -159,9 +160,13 @@ struct component final : generic_component {
       info.set("workshop_id", game::get_workshop_id().value_or(""));
       info.set("usermapId", game::get_workshop_id().value_or(""));
 
+      if (friends::is_friends_only_enabled()) {
+        info.set("friends_only", "1");
+      }
+
       if (network_password::is_password_set()) {
-        info.set("net_password_hash",
-                 network_password::get_password_hash_string());
+        info.set("net_password_required", "1");
+        info.set("net_password_scheme", "1");
       }
 
       network::send(target, "infoResponse", info.build(), '\n');

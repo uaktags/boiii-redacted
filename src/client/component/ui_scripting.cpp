@@ -736,9 +736,134 @@ void ui_cod_init_stub(const bool frontend) {
   ui_initialized.store(true, std::memory_order_seq_cst);
 }
 
+namespace {
+std::atomic_bool lobbyvm_joinability_patch_installed = false;
+
+constexpr std::string_view lobbyvm_joinability_patch = R"BOIII(
+if LobbyVM.patched == nil then
+    LobbyVM.patched = true
+    LobbyVM.OnDisconnect = function() end
+    LobbyVM.old_joinablecheck = LobbyVM.JoinableCheck
+    LobbyVM.JoinableCheck = function(request)
+        local result = LobbyVM.old_joinablecheck(request)
+        if result ~= Enum.JoinResult.JOIN_RESULT_SUCCESS then
+            return result
+        end
+
+        if request.isLocalRequest then
+            return result
+        end
+
+        local clientCount = Engine.GetLobbyClientCount(Enum.LobbyType.LOBBY_TYPE_GAME)
+        local maxClients = Engine.GetLobbyMaxClients(Enum.LobbyType.LOBBY_TYPE_GAME)
+        local maxPlayers = Dvar.party_maxplayers:get()
+
+        if clientCount == nil then
+            clientCount = 1
+        end
+
+        if maxPlayers == nil then
+            maxPlayers = maxClients
+        end
+
+        local availableSlots = maxClients - clientCount
+        if availableSlots > (maxPlayers - clientCount) then
+            availableSlots = maxPlayers - clientCount
+        end
+
+        if availableSlots <= 0 then
+            return Enum.JoinResult.JOIN_RESULT_JOIN_DISABLED
+        end
+
+        local privacy = Engine.GetPartyPrivacy()
+        if privacy == Enum.PartyPrivacy.PARTY_PRIVACY_CLOSED then
+            return Enum.JoinResult.JOIN_RESULT_NOT_JOINABLE_CLOSED
+        end
+
+        if privacy == Enum.PartyPrivacy.PARTY_PRIVACY_FRIENDS_ONLY then
+            local xuid = request.fromXuid
+            if xuid == nil then
+                return Enum.JoinResult.JOIN_RESULT_JOIN_DISABLED
+            end
+
+            if Engine.IsFriendFromXUID(Engine.GetPrimaryController(), xuid) ~= true then
+                return Enum.JoinResult.JOIN_RESULT_NOT_JOINABLE_FRIENDS_ONLY
+            end
+        end
+
+        return result
+    end
+end
+)BOIII";
+
+bool execute_lobby_lua(const std::string_view code, const char *chunk_name) {
+  lua_State *state = *s_lobbyLuaVM;
+  if (state == nullptr || state->m_global == nullptr ||
+      state->m_apistack.top == nullptr) {
+    return false;
+  }
+
+  HksObject *const stack_top = state->m_apistack.top;
+
+  hksi_lua_pushlstring(state, "pcall", 5);
+  HksObject pcall{};
+  hks_obj_gettable(&pcall, state, &state->globals,
+                  &state->m_apistack.top[-1]);
+  state->m_apistack.top = stack_top;
+
+  if (pcall.type() != HksObjectType::TFUNCTION &&
+      pcall.type() != HksObjectType::TCFUNCTION) {
+    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+                          "^1LobbyVM pcall is unavailable\n");
+    return false;
+  }
+
+  const auto sharing_mode = state->m_global->m_bytecodeSharingMode;
+  state->m_global->m_bytecodeSharingMode = HksBytecodeSharingMode::ON;
+
+  HksCompilerSettings compiler_settings{};
+  const int result = hksi_hksL_loadbuffer(
+      state, &compiler_settings, code.data(), code.size(), chunk_name);
+  state->m_global->m_bytecodeSharingMode = sharing_mode;
+
+  if (result != 0) {
+    state->m_apistack.top = stack_top;
+    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+                          "^1LobbyVM patch compile failed (%d)\n", result);
+    return false;
+  }
+
+  // Keep the loaded chunk rooted on the API stack while pcall runs it.
+  const HksObject loaded_chunk = state->m_apistack.top[-1];
+  state->m_apistack.top[-1] = pcall;
+  *state->m_apistack.top++ = loaded_chunk;
+  hksi_lua_call(state, 1, -1, nullptr);
+  const bool success = stack_top->truthy();
+  state->m_apistack.top = stack_top;
+  if (!success) {
+    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+                          "^1LobbyVM patch execution failed\n");
+  }
+  return success;
+}
+
+void install_lobbyvm_joinability_patch() {
+  if (lobbyvm_joinability_patch_installed.load(std::memory_order_acquire)) {
+    return;
+  }
+
+  if (execute_lobby_lua(lobbyvm_joinability_patch,
+                        "boiii_lobby_joinability_patch")) {
+    lobbyvm_joinability_patch_installed.store(true,
+                                              std::memory_order_release);
+  }
+}
+} // namespace
+
 void ui_cod_lobbyui_init_stub() {
   ui_cod_lobbyui_init_hook.invoke();
   try_start();
+  install_lobbyvm_joinability_patch();
 }
 
 void inject_discord_score_subscriptions() {

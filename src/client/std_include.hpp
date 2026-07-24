@@ -46,14 +46,18 @@
 #include <versionhelpers.h>  // IWYU pragma: export
 #include <psapi.h>           // IWYU pragma: export
 #include <urlmon.h>          // IWYU pragma: export
+#if defined(__has_include) && __has_include(<atlbase.h>)
 #include <atlbase.h>         // IWYU pragma: export
 #include <atlsafe.h>         // IWYU pragma: export
+#endif
 #include <iphlpapi.h>        // IWYU pragma: export
 #include <wincrypt.h>        // IWYU pragma: export
 #include <dwmapi.h>          // IWYU pragma: export
 #include <shellscalingapi.h> // IWYU pragma: export
 #include <d3d11.h>           // IWYU pragma: export
 #include <dxgi1_6.h>         // IWYU pragma: export
+
+#include <utils/com.hpp>     // IWYU pragma: export
 
 // min and max is required by gdi, therefore NOMINMAX won't work
 #ifdef max
@@ -119,6 +123,6 @@ using namespace std::literals;
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "urlmon.lib")
 #pragma comment(lib, "iphlpapi.lib")
-#pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")

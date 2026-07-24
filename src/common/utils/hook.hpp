@@ -42,7 +42,7 @@ void **get_vtable_entry(Class *obj, T (Class::*entry)(Args...)) {
   auto *object = iota_functions.data();
 
   using fake_func = size_t(__thiscall *)(void *self);
-  auto index = static_cast<fake_func>(pointer)(&object);
+  auto index = reinterpret_cast<fake_func>(pointer)(&object);
 
   void **obj_v_table = *reinterpret_cast<void ***>(obj);
   return &obj_v_table[index];

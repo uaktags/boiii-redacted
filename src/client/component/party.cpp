@@ -253,28 +253,49 @@ void handle_connect_query_response(const bool success,
     return;
   }
 
-  // Verify network password
-  const std::string server_net_hash = info.get("net_password_hash");
-  if (!server_net_hash.empty() && server_net_hash != "0") {
+  // The server validates the challenge-bound proof during authenticated connect.
+  const std::string net_password_required = info.get("net_password_required");
+  if (net_password_required == "1") {
+    if (info.get("net_password_scheme") != "1") {
+      const char *msg = "Server uses an unsupported network password scheme.";
+      printf("Connect failed: %s\n", msg);
+      toast::show("Connect failed", msg, "t7_icon_connect_overlays");
+      return;
+    }
+
     if (!network_password::is_password_set()) {
       const char *msg = "Server requires a network password.";
       printf("Connect failed: %s\n", msg);
       toast::show("Connect failed", msg, "t7_icon_connect_overlays");
       return;
     }
+  } else {
+    // Compatibility with older boiii servers. This is not authoritative.
+    const std::string server_net_hash = info.get("net_password_hash");
+    if (!server_net_hash.empty() && server_net_hash != "0") {
+      if (!network_password::is_password_set()) {
+        const char *msg = "Server requires a network password.";
+        printf("Connect failed: %s\n", msg);
+        toast::show("Connect failed", msg, "t7_icon_connect_overlays");
+        return;
+      }
 
-    const std::string client_hash =
-        network_password::get_password_hash_string();
-    if (client_hash != server_net_hash) {
-      const char *msg = "Network password mismatch.";
-      printf("Connect failed: %s\n", msg);
-      toast::show("Connect failed", msg, "t7_icon_connect_overlays");
-      return;
+      if (network_password::get_password_hash_string() != server_net_hash) {
+        const char *msg = "Network password mismatch.";
+        printf("Connect failed: %s\n", msg);
+        toast::show("Connect failed", msg, "t7_icon_connect_overlays");
+        return;
+      }
     }
-  } else if (network_password::is_password_set()) {
+  }
+
+  if (net_password_required.empty() && info.get("net_password_hash").empty() &&
+      network_password::is_password_set()) {
     printf("Client has network password set but server does not. Allowing "
            "connection.\n");
   }
+
+  network::set_packet_protection(target, net_password_required == "1");
 
   const std::string mapname = info.get("mapname");
   if (mapname.empty()) {
@@ -404,6 +425,7 @@ void connect_stub(const char *address) {
 }
 
 void send_server_query(server_query &query) {
+  network::set_packet_protection(query.host, false);
   query.sent = true;
   query.query_time = std::chrono::high_resolution_clock::now();
   query.challenge = utils::cryptography::random::get_challenge();

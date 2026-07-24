@@ -2,9 +2,11 @@
 #include <loader/component_loader.hpp>
 
 #include "auth.hpp"
+#include "friends.hpp"
 #include "party.hpp"
 #include "command.hpp"
 #include "network.hpp"
+#include "network_password.hpp"
 #include "scheduler.hpp"
 #include "profile_infos.hpp"
 
@@ -207,10 +209,14 @@ std::string serialize_connect_data(game::ControllerIndex_t controllerIndex,
         CHALLENGE_LENGTH);
   }
 
+  const auto key = get_key(controllerIndex);
+  const std::string public_key = key.serialize(PK_PUBLIC);
+  const std::string connect_data(data, static_cast<size_t>(std::max(length, 0)));
+
   utils::byte_buffer buffer{};
-  buffer.write_string(get_key(controllerIndex).serialize(PK_PUBLIC));
+  buffer.write_string(public_key);
   std::string signature = utils::cryptography::ecc::sign_message(
-      get_key(controllerIndex), challenge);
+      key, challenge);
 
   buffer.write_string(std::move(signature));
 
@@ -218,31 +224,25 @@ std::string serialize_connect_data(game::ControllerIndex_t controllerIndex,
       .value_or(profile_infos::profile_info{})
       .serialize(buffer);
 
-  buffer.write_string(data);
+  buffer.write_string(connect_data);
+  buffer.write_string(network_password::create_connect_proof(
+      challenge, public_key, connect_data));
 
   return buffer.move_buffer();
 }
 
 bool send_fragmented_connect_packet(game::ControllerIndex_t controllerIndex,
-                                    const game::net::netsrc_t sock,
-                                    const game::net::netadr_t *adr,
-                                    const char *data, const int length) {
+                                     [[maybe_unused]] const game::net::netsrc_t sock,
+                                     const game::net::netadr_t *adr,
+                                     const char *data, const int length) {
 
   const std::string connect_data =
       serialize_connect_data(controllerIndex, data, length);
   game::fragment_handler::fragment_data //
-      (connect_data.data(), connect_data.size(),
-       [&](const utils::byte_buffer &buffer) {
-         utils::byte_buffer packet_buffer{};
-         packet_buffer.write("connect");
-         packet_buffer.write(" ");
-         packet_buffer.write(buffer);
-
-         const auto &fragment_packet = packet_buffer.get_buffer();
-
-         game::net::NET_OutOfBandData(sock, adr, fragment_packet.data(),
-                                      static_cast<int>(fragment_packet.size()));
-       });
+       (connect_data.data(), connect_data.size(),
+        [&](const utils::byte_buffer &buffer) {
+          network::send(*adr, "connect", buffer.get_buffer());
+        });
   return true;
 }
 
@@ -303,64 +303,92 @@ inline bool is_invalid_char(const int c) {
 }
 
 void dispatch_connect_packet(const game::net::netadr_t &target,
-                             const std::string &data,
-                             game::LocalClientNum_t clientNum) {
-  utils::byte_buffer buffer(data);
+                              const std::string &data,
+                              game::LocalClientNum_t clientNum) {
+  try {
+    utils::byte_buffer buffer(data);
 
-  utils::cryptography::ecc::key key{};
-  std::string key_ser = buffer.read_string();
-  std::string signature_serialized_str = buffer.read_string();
-  key.deserialize(&key_ser);
+    utils::cryptography::ecc::key key{};
+    std::string key_ser = buffer.read_string();
+    std::string signature_serialized_str = buffer.read_string();
+    key.deserialize(&key_ser);
 
-  std::string challenge{};
-  challenge.resize(CHALLENGE_LENGTH);
+    std::string challenge{};
+    challenge.resize(CHALLENGE_LENGTH);
 
-  const auto get_challenge =
-      reinterpret_cast<void (*)(const game::net::netadr_t *, void *, size_t)>(
-          game::select(0x1412E15E0, 0x14016DDC0));
-  get_challenge(&target, challenge.data(), challenge.size());
+    const auto get_challenge =
+        reinterpret_cast<void (*)(const game::net::netadr_t *, void *, size_t)>(
+            game::select(0x1412E15E0, 0x14016DDC0));
+    get_challenge(&target, challenge.data(), challenge.size());
 
-  if (!utils::cryptography::ecc::verify_message(
-          key, std::move(challenge), std::move(signature_serialized_str))) {
+    if (!utils::cryptography::ecc::verify_message(
+            key, challenge, signature_serialized_str)) {
 
-    network::send(target, "error", "Bad signature");
-    return;
+      network::send(target, "error", "Bad signature");
+      return;
+    }
+
+    const profile_infos::profile_info info(buffer);
+
+    const std::string connect_data = buffer.read_string();
+    const std::string password_proof =
+        buffer.get_remaining_size() == 0 ? std::string{} : buffer.read_string();
+    if (buffer.get_remaining_size() != 0) {
+      network::send(target, "error", "Malformed connect packet");
+      return;
+    }
+
+    const command::params_sv params(connect_data);
+
+    if (params.size() < 2) {
+      return;
+    }
+
+    const auto _ = profile_infos::acquire_profile_lock();
+
+    const utils::info_string info_string(params[1]);
+    const game::XUID xuid =
+        strtoull(info_string.get("xuid").data(), nullptr, 16);
+    if (xuid != key.get_hash()) {
+      network::send(target, "error", "Bad XUID");
+      return;
+    }
+
+    const auto name = info_string.get("name");
+
+    const auto is_name_invalid = [&name]() -> bool {
+      return std::ranges::any_of(
+          name, [](const auto c) { return is_invalid_char(c); });
+    };
+
+    if (name.empty() || is_name_invalid()) {
+      network::send(target, "error", "Bad name");
+      return;
+    }
+
+    const bool is_local_player = xuid == get_guid(game::CONTROLLER_INDEX_0) ||
+                                 xuid == get_guid(game::CONTROLLER_INDEX_1);
+    if (!game::is_server() && target.type != game::net::NA_LOOPBACK &&
+        !is_local_player && friends::is_friends_only_enabled() &&
+        !friends::is_authenticated_friend(xuid)) {
+      network::send(target, "error", "Friends-only game");
+      return;
+    }
+
+    if (!network_password::verify_connect_proof(
+            password_proof, challenge, key_ser, connect_data)) {
+      network::send(target, "error", "Network password mismatch");
+      return;
+    }
+
+    network::set_packet_protection(target, network_password::is_password_set());
+    profile_infos::add_and_distribute_profile_info(target, xuid, info);
+
+    game::sv::SV_DirectConnect(target);
+    handle_new_player(target);
+  } catch (const std::exception &) {
+    network::send(target, "error", "Malformed connect packet");
   }
-
-  const profile_infos::profile_info info(buffer);
-
-  const std::string connect_data = buffer.read_string();
-  const command::params_sv params(connect_data);
-
-  if (params.size() < 2) {
-    return;
-  }
-
-  const auto _ = profile_infos::acquire_profile_lock();
-
-  const utils::info_string info_string(params[1]);
-  const game::XUID xuid = strtoull(info_string.get("xuid").data(), nullptr, 16);
-  if (xuid != key.get_hash()) {
-    network::send(target, "error", "Bad XUID");
-    return;
-  }
-
-  const auto name = info_string.get("name");
-
-  const auto is_name_invalid = [&name]() -> bool {
-    return std::ranges::any_of(name,
-                               [](const auto c) { return is_invalid_char(c); });
-  };
-
-  if (name.empty() || is_name_invalid()) {
-    network::send(target, "error", "Bad name");
-    return;
-  }
-
-  profile_infos::add_and_distribute_profile_info(target, xuid, info);
-
-  game::sv::SV_DirectConnect(target);
-  handle_new_player(target);
 }
 
 void handle_connect_packet_fragment(const game::net::netadr_t &target,
