@@ -33,6 +33,7 @@ submodules produce misleading compiler errors later, so initialize them first.
 The supported native workflow is:
 
 ```bat
+generate.bat
 ```
 
 Open the generated `build/boiii.sln` in Visual Studio 2022, select `Release` and
@@ -159,9 +160,9 @@ Do not remove this loader until native replacements have been runtime-tested.
 
 Most game addresses are declared as `WEAK symbol<...>` values and selected with
 `game::select(client_address, dedicated_address)`. Client addresses normally
-use image base `0x140000000`; dedicated addresses are separate and must not be
-assumed to match client offsets. The current repository has no dedicated-server
-dump for resolving the remaining dedicated-only site at `0x1404FA1F4`.
+use image base `0x140000000`; dedicated addresses are separate and resolved
+relocatable using `_g` runtime selection. The dedicated server binary
+`BlackOps3_UnrankedDedicatedServer.exe` is available in `/home/tim/t7_full_game/`.
 
 The custom connectionless path builds packets as:
 
