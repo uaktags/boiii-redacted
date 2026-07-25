@@ -28,6 +28,10 @@ std::mutex password_state_mutex;
 password_snapshot password_state{};
 
 std::string get_password() {
+  if (net_password_dvar == nullptr) {
+    return {};
+  }
+
   return std::string(net_password_dvar.get_string().value_or(""));
 }
 

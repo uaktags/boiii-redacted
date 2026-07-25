@@ -232,17 +232,37 @@ std::string serialize_connect_data(game::ControllerIndex_t controllerIndex,
 }
 
 bool send_fragmented_connect_packet(game::ControllerIndex_t controllerIndex,
-                                     [[maybe_unused]] const game::net::netsrc_t sock,
-                                     const game::net::netadr_t *adr,
-                                     const char *data, const int length) {
+                                    const game::net::netsrc_t sock,
+                                    const game::net::netadr_t *adr,
+                                    const char *data, const int length) {
 
   const std::string connect_data =
       serialize_connect_data(controllerIndex, data, length);
   game::fragment_handler::fragment_data //
-       (connect_data.data(), connect_data.size(),
-        [&](const utils::byte_buffer &buffer) {
-          network::send(*adr, "connect", buffer.get_buffer());
-        });
+      (connect_data.data(), connect_data.size(),
+       [&](const utils::byte_buffer &buffer) {
+         utils::byte_buffer packet_buffer{};
+         packet_buffer.write("connect");
+         packet_buffer.write(" ");
+         packet_buffer.write(buffer);
+
+         const auto &fragment_packet = packet_buffer.get_buffer();
+
+         if (network_password::is_password_set()) {
+           std::string protected_packet{"\xFF\xFF\xFF\xFF", 4};
+           protected_packet.append(fragment_packet);
+           protected_packet = network_password::protect_packet(
+               protected_packet, std::string_view{"connect"}.size() + 5);
+
+           game::net::NET_SendPacket(sock,
+                                     static_cast<int>(protected_packet.size()),
+                                     protected_packet.data(), adr);
+           return;
+         }
+
+         game::net::NET_OutOfBandData(sock, adr, fragment_packet.data(),
+                                      static_cast<int>(fragment_packet.size()));
+       });
   return true;
 }
 

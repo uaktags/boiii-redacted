@@ -7,6 +7,7 @@
 #include "command.hpp"
 #include "network.hpp"
 #include "network_password.hpp"
+#include "party.hpp"
 #include "scheduler.hpp"
 
 #include <utils/hook.hpp>
@@ -58,7 +59,9 @@ int64_t handle_command(const game::net::netadr_t *address, const char *command,
                      (protected_packet || cmd_string == "connect");
 
   if (callback_entry == callbacks.end() && protected_packet) {
-    return false;
+    // Authentication failures cannot use the negotiated password envelope.
+    // Only let the engine consume an error from the host currently being joined.
+    return cmd_string == "error" && party::is_host(*address);
   }
 
   if (callback_entry == callbacks.end()) {

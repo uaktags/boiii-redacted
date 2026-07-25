@@ -145,6 +145,7 @@ struct component final : generic_component {
       info.set("gamemode", std::to_string(static_cast<int32_t>(
                                game::com::Com_SessionMode_GetGameMode())));
       info.set("sv_running", std::to_string(game::server_running()));
+      info.set("lobby_state", game::server_running() ? "active" : "pregame");
       info.set("dedicated", game::is_server() ? "1" : "0");
       info.set("hc",
                std::to_string(game::com::gts::Com_GametypeSettings_GetUInt(

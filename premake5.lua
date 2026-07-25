@@ -392,6 +392,7 @@ files({
 includedirs({
   "./deps/argparse/include",
   "./deps/SteamworkSDK/public",
+  "./src",
   "./src/client",
   "./src/common",
   "%{prj.location}/src",
