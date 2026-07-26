@@ -1,0 +1,168 @@
+--- a/src/common/utils/http.cpp
++++ b/src/common/utils/http.cpp
+@@ -123,8 +123,8 @@
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(curl, CURLOPT_USERAGENT, "ezz-updater/1.0");
+   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   // Request raw data without encoding modifications
+   curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+                    PREFERRED_ACCEPT_ENCODING_HEADER);
+@@ -183,8 +183,8 @@
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(timeout_sec));
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(curl, CURLOPT_USERAGENT, "ezz-updater/1.0");
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+ 
+   const auto code = curl_easy_perform(curl);
+@@ -229,8 +229,8 @@
+   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+   curl_easy_setopt(curl, CURLOPT_USERAGENT, "ezz-updater/1.0");
+   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+-  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+   curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+                    PREFERRED_ACCEPT_ENCODING_HEADER);
+ 
+--- a/src/client/component/fastdl.cpp
++++ b/src/client/component/fastdl.cpp
+@@ -223,8 +223,8 @@
+     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+     curl_easy_setopt(curl, CURLOPT_USERAGENT, "fastdl/1.0");
+     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING,
+                      utils::http::PREFERRED_ACCEPT_ENCODING_HEADER);
+     download_stream_context stream_ctx{&ui, file, &ofs};
+--- a/src/client/component/steamcmd.cpp
++++ b/src/client/component/steamcmd.cpp
+@@ -270,9 +270,8 @@
+       }
+ 
+       curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+-      curl_easy_setopt(curl, CURLOPT_CAINFO, "./ca-bundle.crt");
+-      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+-      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
++      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
++      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+       curl_easy_setopt(curl, CURLOPT_WRITEDATA, outFile);
+       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+--- a/src/client/main.cpp
++++ b/src/client/main.cpp
+@@ -11,6 +11,7 @@
+ #include <utils/http.hpp>
+ #include <utils/flags.hpp>
+ #include <utils/com.hpp>
++#include <utils/cryptography.hpp>
+ #include <utils/progress_ui.hpp>
+ 
+ #include <steam/steam.hpp>
+@@ -123,6 +124,8 @@
+ 
+ constexpr const char *supported_client_patch_url =
+     "https://archive.org/download/t7_full_game/BlackOps3.exe";
++constexpr const char *supported_client_patch_sha1 =
++    "9082c9fb766caec756c7b6409127f47aec0c9e51";
+ 
+ enum class client_binary_state {
+   supported,
+@@ -196,6 +199,12 @@
+   }
+ 
+   return std::nullopt;
++}
++
++bool has_expected_client_patch_hash(const std::filesystem::path &file) {
++  std::ifstream stream(file, std::ios::binary);
++  return stream.is_open() && utils::cryptography::sha1::compute(stream, true) ==
++                                 supported_client_patch_sha1;
+ }
+ 
+ client_binary_state
+@@ -427,7 +436,7 @@
+   progress.set_line(2, temp_binary.filename().string());
+ 
+   const auto downloaded_checksum = get_pe_checksum(temp_binary);
+-  if (!downloaded_checksum ||
++  if (!has_expected_client_patch_hash(temp_binary) || !downloaded_checksum ||
+       *downloaded_checksum != get_expected_client_checksum()) {
+     throw std::runtime_error(
+         "The downloaded BlackOps3.exe patch did not match the BOIII-"
+--- a/src/client/component/gsc/gsc_funcs.cpp
++++ b/src/client/component/gsc/gsc_funcs.cpp
+@@ -1337,10 +1337,10 @@
+     register_builtin("appendfile", gscr_appendfile);
+     register_builtin("fileexists", gscr_fileexists);
+     register_builtin("removefile", gscr_removefile);
+-    register_builtin("removedirectory", gscr_removedirectory);
+-    register_builtin("rmdir", gscr_removedirectory);
++    register_builtin("removedirectory", gscr_removedirectory, DEFAULT_BUILTIN_TYPE, 1);
++    register_builtin("rmdir", gscr_removedirectory, DEFAULT_BUILTIN_TYPE, 1);
+     register_builtin("rm", gscr_rm);
+-    register_builtin("filesize", gscr_filesize);
++    register_builtin("filesize", gscr_filesize, DEFAULT_BUILTIN_TYPE, 1);
+     register_builtin("createdirectory", gscr_createdirectory);
+     register_builtin("mkdir", gscr_createdirectory);
+     register_builtin("directoryexists", gscr_directoryexists);
+@@ -1374,14 +1374,14 @@
+     register_builtin("clearreplacefuncs", gscr_clearreplacefuncs);
+ 
+     // Player name/tag overrides (server-only)
+-    register_builtin("setname", gscr_setname::func);
+-    register_builtin("setname", gscr_setname::method);
+-    register_builtin("settag", gscr_settag::func);
+-    register_builtin("settag", gscr_settag::method);
+-    register_builtin("resetname", gscr_resetname::func);
+-    register_builtin("resetname", gscr_resetname::method);
+-    register_builtin("resettag", gscr_resettag::func);
+-    register_builtin("resettag", gscr_resettag::method);
++    register_builtin("setname", gscr_setname::func, DEFAULT_BUILTIN_TYPE, 2, 3);
++    register_builtin("setname", gscr_setname::method, DEFAULT_BUILTIN_TYPE, 1, 2);
++    register_builtin("settag", gscr_settag::func, DEFAULT_BUILTIN_TYPE, 2, 3);
++    register_builtin("settag", gscr_settag::method, DEFAULT_BUILTIN_TYPE, 1, 2);
++    register_builtin("resetname", gscr_resetname::func, DEFAULT_BUILTIN_TYPE, 1);
++    register_builtin("resetname", gscr_resetname::method, DEFAULT_BUILTIN_TYPE, 0);
++    register_builtin("resettag", gscr_resettag::func, DEFAULT_BUILTIN_TYPE, 1);
++    register_builtin("resettag", gscr_resettag::method, DEFAULT_BUILTIN_TYPE, 0);
+     register_builtin("setclientdvar", gscr_setclientdvar::func);
+     register_builtin("setclientdvar", gscr_setclientdvar::method);
+ 
+--- a/data/launcher/main.css
++++ b/data/launcher/main.css
+@@ -1394,6 +1394,11 @@
+ .bb-table th { background: rgba(249,115,22,0.08); color: rgba(249,115,22,0.8); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
+ 
+ .workshop-loading {
++  position: absolute;
++  top: 0;
++  right: 0;
++  bottom: 0;
++  left: 0;
+   display: flex;
+   justify-content: center;
+   align-items: center;
+@@ -1405,6 +1410,11 @@
+ }
+ 
+ .workshop-browse-empty {
++  position: absolute;
++  top: 0;
++  right: 0;
++  bottom: 0;
++  left: 0;
+   display: flex;
+   flex-direction: column;
+   justify-content: center;

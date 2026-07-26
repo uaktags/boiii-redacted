@@ -33,6 +33,8 @@ std::string get_selected_version() {
   return "latest";
 }
 
+bool should_skip_host_update() { return get_selected_version() != "latest"; }
+
 std::string get_update_file() {
   if (get_selected_version() == "beta") {
     return UPDATE_FILE_BETA;
@@ -49,7 +51,7 @@ std::string get_update_folder() {
 
 std::vector<file_info> parse_file_infos(const std::string &json) {
   rapidjson::Document doc{};
-  doc.Parse(json.data(), json.size());
+  doc.Parse<rapidjson::kParseIterativeFlag>(json.data(), json.size());
 
   if (!doc.IsArray()) {
     return {};
@@ -168,6 +170,7 @@ void file_updater::create_config_file_if_not_exists() const {
 
 void file_updater::run() const {
   this->create_config_file_if_not_exists();
+
   const auto files = get_file_infos();
 
   OutputDebugStringA(
@@ -189,7 +192,8 @@ void file_updater::run() const {
   }
 
 #ifndef NDEBUG
-  const auto *host_file = find_host_file_info(files);
+  const auto *host_file =
+      should_skip_host_update() ? nullptr : find_host_file_info(files);
   if (host_file) {
     std::string data{};
     const auto drive_name = this->get_drive_filename(*host_file);
@@ -443,6 +447,11 @@ void file_updater::update_files(
 }
 
 bool file_updater::is_outdated_file(const file_info &file) const {
+  if (file.name == UPDATE_HOST_BINARY && should_skip_host_update()) {
+    OutputDebugStringA("Skipping host binary update for selected version\n");
+    return false;
+  }
+
 #ifndef NDEBUG
   if (file.name == UPDATE_HOST_BINARY && !utils::flags::has_flag("update")) {
     OutputDebugStringA("Skipping host binary update in debug build (use "
