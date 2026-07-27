@@ -53,7 +53,11 @@ __attribute__((optnone)) void
 flush_exec(scriptInstance_t inst, volatile vm::function_stack_t *fs,
            volatile vm::ScrVmContext_t *vmc, volatile bool *terminate) {
 
-  flush_stack(inst, fs, vmc, terminate);
+  // v1.1.16 did not flush frontend/client VM state. Keep client opcode
+  // execution on the original path; retain the server safety workaround.
+  if (inst == SCRIPTINSTANCE_SERVER) {
+    flush_stack(inst, fs, vmc, terminate);
+  }
   invoke_opcode<Op>(inst, fs, vmc, terminate);
 }
 
@@ -75,7 +79,11 @@ __attribute__((optnone)) void
 redirect_or_default(scriptInstance_t inst, volatile vm::function_stack_t *fs,
                     volatile vm::ScrVmContext_t *vmc,
                     volatile bool *terminate) {
-  flush_stack(inst, fs, vmc, terminate);
+  // v1.1.16 did not flush frontend/client VM state. Keep client opcode
+  // execution on the original path; retain the server safety workaround.
+  if (inst == SCRIPTINSTANCE_SERVER) {
+    flush_stack(inst, fs, vmc, terminate);
+  }
   if (!try_redirect(inst, fs)) {
     invoke_opcode<Op>(inst, fs, vmc, terminate);
   }
