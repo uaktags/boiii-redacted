@@ -114,6 +114,24 @@ public:
   CComVariant(const char *value) : CComVariant() { assign_string(value); }
   CComVariant(const wchar_t *value) : CComVariant() { assign_string(value); }
 
+  // WebView2 launcher bridge constructs variants from JSON primitives.
+  CComVariant(bool value) : CComVariant() {
+    vt = VT_BOOL;
+    boolVal = value ? VARIANT_TRUE : VARIANT_FALSE;
+  }
+
+  CComVariant(int value) : CComVariant() {
+    vt = VT_I4;
+    lVal = value;
+  }
+
+  CComVariant(double value) : CComVariant() {
+    vt = VT_R8;
+    dblVal = value;
+  }
+
+  void Clear() { VariantClear(this); }
+
   CComVariant &operator=(const CComVariant &other) {
     if (this != &other) {
       VariantClear(this);

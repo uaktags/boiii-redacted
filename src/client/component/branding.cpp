@@ -18,6 +18,7 @@
 
 #include <utils/hook.hpp>
 #include <utils/flags.hpp>
+#include <utils/string.hpp>
 
 namespace branding {
 namespace {
@@ -35,8 +36,16 @@ void draw_branding() {
   if (!font)
     return;
 
+#if defined(GIT_HASH)
+  char short_hash[9] = {0};
+  std::strncpy(short_hash, GIT_HASH, 8);
+  const std::string text = utils::string::va("EZZ: %s (%s)", VERSION, short_hash);
+#else
+  const std::string text = utils::string::va("EZZ: %s", VERSION);
+#endif
+
   game::render::R_AddCmdDrawText(
-      "EZZ: " VERSION, std::numeric_limits<int>::max(), font, x,
+      text.c_str(), std::numeric_limits<int>::max(), font, x,
       y + static_cast<float>(font[2]) * scale, scale, scale, 0.0f, &color,
       game::itemTextStyle::NORMAL);
 }

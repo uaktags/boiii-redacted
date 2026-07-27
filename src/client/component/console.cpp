@@ -83,6 +83,11 @@ bool full_logs_enabled() {
   return enabled;
 }
 
+bool file_logs_enabled() {
+  static const bool enabled = utils::flags::has_flag("filelogs");
+  return enabled;
+}
+
 COLORREF get_cod_color(const char code) {
   switch (code) {
   case '0':
@@ -894,6 +899,33 @@ void print_message(const char *message) {
 void queue_message(const char *message) {
   std::string msg(message);
 
+  // Tee all console output to a log file so it can be read headlessly
+  // (e.g. under Wine/flatpak where the -console window isn't capturable and
+  // the CWD/module path may be a stale portal doc). Use %LOCALAPPDATA%\boiii,
+  // which is a stable, writable Wine-internal path BOIII already uses.
+  if (file_logs_enabled()) {
+    static std::mutex log_mutex;
+    static std::ofstream log_file;
+    std::lock_guard<std::mutex> lock(log_mutex);
+    if (!log_file.is_open()) {
+      std::filesystem::path log_dir;
+      if (const char *lad = getenv("LOCALAPPDATA"); lad && *lad) {
+        log_dir = std::filesystem::path(lad) / "boiii" / "logs";
+      } else {
+        char cwd[MAX_PATH] = {};
+        GetCurrentDirectoryA(MAX_PATH, cwd);
+        log_dir = std::filesystem::path(cwd) / "logs";
+      }
+      std::error_code ec;
+      std::filesystem::create_directories(log_dir, ec);
+      log_file.open(log_dir / "boiii_console.log", std::ios::app);
+    }
+    if (log_file.is_open()) {
+      log_file << msg;
+      log_file.flush();
+    }
+  }
+
   interceptor.access(
       [&msg](const std::function<void(const std::string &)> &callback) {
         if (callback) {
@@ -1434,7 +1466,10 @@ struct component final : generic_component {
                                 0xEB); // Always enable ingame console
       utils::hook::jump(0x141344E44_g, 0x141344E2E_g);
 
-      if (utils::nt::is_wine() && !utils::flags::has_flag("console")) {
+      // -filelogs enables the file sink without requiring the -console window,
+      // which is useful headlessly under Wine/flatpak.
+      if (utils::nt::is_wine() && !utils::flags::has_flag("console") &&
+          !file_logs_enabled()) {
         return;
       }
     }

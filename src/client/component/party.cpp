@@ -298,8 +298,9 @@ void handle_connect_query_response(const bool success,
   network::set_packet_protection(target, net_password_required == "1");
 
   const std::string mapname = info.get("mapname");
-  if (mapname.empty()) {
-    const char *msg = "Invalid map.";
+  if (mapname.empty() || mapname == "core_frontend") {
+    const char *msg = mapname.empty() ? "Invalid map."
+                                      : "Server is not in a playable lobby.";
     printf("Connect failed: %s\n", msg);
     toast::show("Connect failed", msg, "t7_icon_connect_overlays");
     return;
@@ -322,11 +323,17 @@ void handle_connect_query_response(const bool success,
                                    ? info.get("sv_wwwBaseUrl")
                                    : info.get("sv_wwwBaseURL");
 
-  // const std::string hostname = info.get("sv_hostname");
+  const std::string hostname = info.get("sv_hostname").empty()
+                                   ? info.get("hostname")
+                                   : info.get("sv_hostname");
   const std::string playmode = info.get("playmode");
   const game::eModes mode =
       static_cast<game::eModes>(std::atoi(playmode.data()));
-  // const game::XUID xuid = strtoull(info.get("xuid").data(), nullptr, 16);
+  const game::XUID xuid = strtoull(info.get("xuid").data(), nullptr, 16);
+  const std::string sv_running = info.get("sv_running");
+  const std::string lobby_state = info.get("lobby_state");
+  const bool is_pregame_host = (!is_connecting_to_dedi.load() &&
+                                (sv_running == "0" || lobby_state == "pregame"));
 
   scheduler::once(
       [=] {
@@ -343,9 +350,13 @@ void handle_connect_query_response(const bool success,
         if (workshop::check_valid_usermap_id(mapname, usermap_id, workshop_id,
                                              base_uri) &&
             workshop::check_valid_mod_id(mod_id, workshop_id)) {
-          // connect_to_session(target, hostname, xuid, mode);
-          connect_to_lobby_with_mode_internal(target, mode, mapname, gametype,
-                                              usermap_id, mod_id);
+          if (is_pregame_host) {
+            printf("Connecting to host pre-game party session at %s...\n", addr_str);
+            connect_to_session(target, hostname, xuid, mode);
+          } else {
+            connect_to_lobby_with_mode_internal(target, mode, mapname, gametype,
+                                                usermap_id, mod_id);
+          }
         } else {
           const char *msg = utils::string::va(
               "Missing or invalid workshop/map dependencies for server %s.",
