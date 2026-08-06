@@ -60,7 +60,7 @@ void dof_enabled_stub(utils::hook::assembler &a) {
   a.jmp(0x141116EC2_g); // CG_UpdateAdsDof
 }
 
-void dvar_disablebool_cb(EngineDependentDvar dvar) {
+void dvar_disablebool_cb(EngineDependentDvarMut dvar) {
   if (dvar.get_bool()) {
     dvar.set(false);
   }
@@ -159,7 +159,7 @@ EngineDependentDvar Dvar_GetSessionModeSpecificDvarInternal_FallbackDefault(
                     "Warning: Sessionmode not set while attempting to get "
                     "sessionmode specific dvar for mode: %s from base dvar : "
                     "\"%s\". Falling back to "
-                    "first available sessionmode-specific dvar.",
+                    "first available sessionmode-specific dvar.\n",
                     serialize(mode), name);
     const SessionModePool<EngineDependentDvar> &sessionModeSpecificDvars =
         base.indirect();
@@ -174,7 +174,7 @@ EngineDependentDvar Dvar_GetSessionModeSpecificDvarInternal_FallbackDefault(
         "Warning: Sessionmode not set while attempting to get "
         "sessionmode specific dvar for mode: %s from base dvar : \"%s\", and "
         "none of the "
-        "sessionmode-specific dvars were available. Returning base dvar.",
+        "sessionmode-specific dvars were available. Returning base dvar.\n",
         serialize(mode), name);
     return base.resolve();
   }

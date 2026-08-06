@@ -355,7 +355,16 @@ optimize("Debug")
 defines({ "DEBUG", "_DEBUG", "_CRT_DEBUG" })
 filter({})
 filter({ "configurations:Debug", "toolset:msc*" })
-buildoptions({ "/MDd" })
+buildoptions({
+  "/MDd",
+  "/clang:-march=x86-64",
+  -- Only used after positive test for support at runtime.
+  -- We need to compile with these CPU features regardless of end-user
+  -- support to ensure that SSE4.2 and AES ISA extension ASM instructions
+  -- can be emitted at all.
+  "/clang:-mno-sse4.1",
+  "/clang:-mno-sse4.2",
+})
 linkoptions({
   "/DEBUG",
   "/NODEFAULTLIB:libcmt.lib",
@@ -366,6 +375,9 @@ linkoptions({
 filter({})
 filter({ "configurations:Debug", "toolset:not msc*" })
 buildoptions({
+  "-march=x86-64",
+  "-mno-sse4.1",
+  "-mno-sse4.2",
   "-Wl,/DEBUG",
   "-Wl,/NODEFAULTLIB:libcmt.lib",
   "-Wl,/NODEFAULTLIB:libucrt.lib",
@@ -437,7 +449,15 @@ includedirs({
 
   links({ "common", "WebView2LoaderStatic", "advapi32.lib", "ole32.lib", "oleaut32.lib" })
 
-if not os.isfile("%{_MAIN_SCRIPT_DIR}/src/version.h") or not os.isfile("%{_MAIN_SCRIPT_DIR}/src/version.hpp") then
+local hasVersion = (
+  os.isfile(path.join(_MAIN_SCRIPT_DIR, "src/version.h"))
+  or os.isfile(path.join(_MAIN_SCRIPT_DIR, "build/src/version.h"))
+)
+  and (
+    os.isfile(path.join(_MAIN_SCRIPT_DIR, "src/version.hpp"))
+    or os.isfile(path.join(_MAIN_SCRIPT_DIR, "build/src/version.hpp"))
+  )
+if not hasVersion then
   if os.host() == "windows" then
     prebuildcommands({ "pushd %{_MAIN_SCRIPT_DIR}", "premake5 generate-buildinfo", "popd" })
   else
@@ -502,7 +522,7 @@ dependencies.projects()
 -- or hasn't generated it yet when tls.dll is completing compilation.
 -- This is duplicative, but allows the build to work without forcing a single-threaded build or requiring a separate manual step to generate the version header before building.
 -- It's also easier than finding some way of sycnhronizing the generation of the version header between the two projects.
-if not os.isfile("%{_MAIN_SCRIPT_DIR}/src/version.h") or not os.isfile("%{_MAIN_SCRIPT_DIR}/src/version.hpp") then
+if not hasVersion then
   if os.host() == "windows" then
     prebuildcommands({ "pushd %{_MAIN_SCRIPT_DIR}", "premake5 generate-buildinfo", "popd" })
   else

@@ -101,6 +101,36 @@ std::string resolve_hashes_in_string(const std::string &input) {
   return resolve_bare_hashes(resolve_quoted_hashes(input));
 }
 
+utils::hook::detour Sys_Error_hook;
+void Sys_Error_LogCaller(const char *fmt, ...) {
+  void *callerAddr = _ReturnAddress();
+  va_list ap;
+  va_start(ap, fmt);
+  int32_t len = vsnprintf(nullptr, 0, fmt, ap);
+  va_end(ap);
+  va_start(ap, fmt);
+  std::vector<char> infoBuf(len + 1);
+  vsnprintf(infoBuf.data(), infoBuf.size(), fmt, ap);
+  va_end(ap);
+  const char *msg = infoBuf.data();
+  if (msg == nullptr || msg[0] == '\0') {
+    msg = "No message provided!";
+  }
+  fprintf(stderr, "[Sys_Error] Called from 0x%p with message: \"%s\"",
+          game::derelocate(callerAddr), msg);
+  fflush(stderr);
+  game::trace("[Sys_Error] Called from 0x%p with message: \"%s\"",
+              game::derelocate(callerAddr), msg);
+  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+                        "[Sys_Error] Called from 0x%p with message: \"%s\"",
+                        game::derelocate(callerAddr), msg);
+  if (game::is_server() && server_restart::restart_pending.load()) {
+
+    return;
+  }
+  Sys_Error_hook.invoke("%s", msg);
+}
+
 #define MS 1ms
 #define SECOND 1000 * MS
 #define MINUTE 60 * SECOND
@@ -121,12 +151,16 @@ void com_error_stub(const char *file, int line, game::errorParm code,
   if (msg == nullptr || msg[0] == '\0') {
     msg = "No message provided!";
   }
-  printf("[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
-         callerAddr, msg, static_cast<int32_t>(code));
+  fprintf(stderr,
+          "[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
+          game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
+  fflush(stderr);
+  game::trace("[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
+              game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
   game::com::Com_Printf(
       0, game::consoleLabel_e::DEFAULT,
-      "ComError called from 0x%p with message: \"%s\", code: %d\n", callerAddr,
-      msg, static_cast<int32_t>(code));
+      "ComError called from 0x%p with message: \"%s\", code: %d\n",
+      game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
   static bool suppress_next_lua_error = false;
   static bool client_script_error_pending = false;
 
@@ -353,8 +387,6 @@ void scr_get_num_expected_players() {
     const int32_t min_players = lobby_min_players.get_int();
     if (min_players > 0) {
       expected_players = min_players;
-    } else if (!game::is_server()) {
-      expected_players = 1;
     }
   }
 
@@ -380,6 +412,31 @@ void Sys_WaitForSingleObject_Safe(HANDLE *event) {
   }
 }
 
+game::cmd::xcommand_t original_fast_restart{};
+game::cmd::xcommand_t original_map_restart{};
+
+game::cmd::cmd_function_s *find_command(const char *name) {
+  game::cmd::cmd_function_s *command = game::cmd::cmd_functions.get();
+  for (size_t i = 0; command && i < 2000; ++i, command = command->next) {
+    if (command->name && _stricmp(command->name, name) == 0)
+      return command;
+  }
+  return nullptr;
+}
+
+template <const game::RestartMethod_t RestartMethod>
+void SV_RestartCmd_RotateOrDefault() {
+  if (game::get_sv_running() &&
+      !game::com::Com_SessionMode_IsMode(game::eModes::COUNT) /* main menu */) {
+    game::cbuf::Cbuf_AddText(0, "map_rotate\n");
+  } else {
+    game::sv::SV_MapRestart(RestartMethod);
+  }
+}
+
+utils::hook::detour SV_FastRestart_f_hook;
+utils::hook::detour SV_MapRestart_f_hook;
+
 utils::hook::detour G_RegisterSoundWait_hook;
 #ifndef NDEBUG
 utils::hook::detour SND_HashName_hook;
@@ -396,6 +453,7 @@ struct component final : generic_component {
 #endif
     // Clientfield Mismatch -> recoverable ERR_DROP
     com_error_hook.create(game::com::Com_Error_, com_error_stub);
+    Sys_Error_hook.create(game::sys::Sys_Error, Sys_Error_LogCaller);
 
     /*
        Fix memory access exception in Sys_WaitForSingleObject during mapswitch.
@@ -423,7 +481,14 @@ struct component final : generic_component {
 
     utils::hook::jump(game::select(0x141A7BCF0, 0x1402CB900),
                       scr_get_num_expected_players, true);
-  }
+
+    SV_MapRestart_f_hook.create(
+        game::sv::SV_MapRestart_f.get(),
+        SV_RestartCmd_RotateOrDefault<game::RestartMethod_t::FULL>);
+    SV_FastRestart_f_hook.create(
+        game::sv::SV_FastRestart_f.get(),
+        SV_RestartCmd_RotateOrDefault<game::RestartMethod_t::ROUND>);
+  } // namespace patches
 };
 } // namespace patches
 

@@ -1,14 +1,23 @@
 #pragma once
 
-#include "scr/scr.hpp"
-#include "math.hpp"
-#include "snd/snd.hpp"
-#include "core.hpp"
-#include "asm.hpp"
+#include "../math.hpp"
+#include "../snd/snd.hpp"
+#include "../core.hpp"
+#include "../asm.hpp"
+#include "game/symbol.hpp"
+#include <cstdint>
 
 namespace game {
 namespace phys {
+
+namespace vehicle {
+struct NitrousVehicle;
+}
+
+namespace level {
 struct gentity_s;
+typedef gentity_s gentity_t;
+} // namespace level
 #pragma pack(push, 1)
 
 struct hitinfo_t {
@@ -28,6 +37,17 @@ enum class PhysicsOwnerType : int32_t {
   RAGDOLL = 0x4,
   XDOLL = 0x5,
   COUNT = 0x6,
+};
+
+class broad_phase_memory_info {
+public:
+  static constexpr symbol<thiscall_t<void(broad_phase_memory_info *)>>
+      constructor{0x0, 0x14000EEC0};
+
+  inline broad_phase_memory_info() { constructor(this); }
+  int32_t m_max_num_gjk_ci;
+  int32_t m_max_num_sap_active_pairs;
+  int32_t m_max_num_surface_types;
 };
 
 struct broad_phase_base {
@@ -50,11 +70,7 @@ public:
   Node *m_next_link;
 };
 
-struct phys_mat33 {
-  math::Float4 x;
-  math::Float4 y;
-  math::Float4 z;
-};
+typedef vec3<math::Float4> phys_mat33;
 
 class rigid_body;
 
@@ -93,14 +109,14 @@ struct PhysPreset {
   snd::SoundsImpactTablePtr impactSounds;
 };
 
-struct rigid_body_constraint_contact;
-struct rigid_body_constraint_custom_path;
-struct rigid_body_constraint_custom_orientation;
-struct rigid_body_constraint_upright;
-struct rigid_body_constraint_angular_actuator;
-struct rigid_body_constraint_ragdoll;
-struct rigid_body_constraint_distance;
-struct rigid_body_constraint_hinge;
+class rigid_body_constraint_contact;
+class rigid_body_constraint_custom_path;
+class rigid_body_constraint_custom_orientation;
+class rigid_body_constraint_upright;
+class rigid_body_constraint_angular_actuator;
+class rigid_body_constraint_ragdoll;
+class rigid_body_constraint_distance;
+class rigid_body_constraint_hinge;
 
 class rigid_body_constraint;
 
@@ -118,9 +134,8 @@ public:
 };
 ASSERT_SIZE(pulse_sum_cache, 0x4);
 
-class rigid_body_constraint_point : rigid_body_constraint {
+class rigid_body_constraint_point : public rigid_body_constraint {
 public:
-  uint8_t _padding00[8];
   math::Dir3 m_b1_r_loc;
   math::Dir3 m_b2_r_loc;
   pulse_sum_cache m_ps_cache_list[3];
@@ -130,7 +145,7 @@ public:
   bool m_spring_enabled;
   uint8_t _padding59[7];
 };
-ASSERT_SIZE(rigid_body_constraint_point, 0x60);
+ASSERT_SIZE(rigid_body_constraint_point, 0x58);
 
 class pulse_sum_node;
 class rigid_body;
@@ -157,6 +172,15 @@ ASSERT_SIZE(rb_inplace_partition_node, 0x70);
 
 class rigid_body {
 public:
+  static constexpr symbol<thiscall_t<void(
+      rigid_body *, const float mass, const math::Dir3 *inertia,
+      const math::RotTranMat43 *mat, const math::Dir3 *t_vel,
+      const math::Dir3 *a_vel, const int32_t stable_min_contact_count)>>
+      set{0x0, 0x14002C840};
+  static constexpr symbol<
+      thiscall_t<void(rigid_body *, const math::Dir3 *inertia)>>
+      set_inertia{0x0, 0x14002CDA0};
+
   math::Dir3 m_last_position;
   math::Dir3 m_moved_vec;
   float m_smallest_lambda;
@@ -196,8 +220,6 @@ struct rigid_body_pair_key {
   rigid_body *m_b2;
 };
 ASSERT_SIZE(rigid_body_pair_key, 0x10);
-
-class NitrousVehicle;
 
 class phys_gjk_geom {
 public:
@@ -246,7 +268,7 @@ class PhysObjUserData {
 public:
   const PhysPreset *physPreset;
   rigid_body *body;
-  NitrousVehicle *vehicle;
+  vehicle::NitrousVehicle *vehicle;
   gjk_geom_list_t m_gjk_geom_list;
   PhysObjUserData *m_next_link;
   math::RotTranMat43 cg2rb;
@@ -363,7 +385,7 @@ struct trigger_info_t {
 ASSERT_SIZE(trigger_info_t, 0xC);
 
 struct sv_FxVisBlock_t {
-  const gentity_s *fxEnt;
+  const level::gentity_t *fxEnt;
   float radius;
   uint8_t _padding0C[4];
 };
@@ -743,6 +765,351 @@ struct objcamCameraState {
   int32_t ocsLastCameraBase;
   int32_t ocsLastCamera;
   vec3_t ocsViewAngles;
+};
+
+template <typename T> class phys_simple_link_list {
+public:
+  T *m_first;
+};
+
+template <typename T> struct phys_inplace_avl_tree_node {
+  T *m_left;
+  T *m_right;
+  int32_t m_balance;
+  uint8_t _padding14[4];
+};
+
+class pulse_sum_node;
+
+class PhysObjUserData;
+class rigid_body;
+
+struct WheelState {
+  int32_t m_state;
+  int32_t m_last_state;
+  float m_rate[4];
+};
+
+typedef uint32_t phys_gjk_geom_id;
+
+class broad_phase_info : public broad_phase_base {
+public:
+  rigid_body *m_rb;
+  const math::RotTranMat43 *m_rb_to_world_xform;
+  const math::RotTranMat43 *m_cg_to_world_xform;
+  const math::RotTranMat43 *m_cg_to_rb_xform;
+  const phys_gjk_geom *m_gjk_geom;
+  phys_gjk_geom_id m_gjk_geom_id;
+  int32_t m_surface_type;
+};
+
+struct cached_simplex_info {
+  math::Dir3 m_indices[3];
+};
+
+class phys_gjk_geom_id_pair_key {
+public:
+  phys_gjk_geom_id m_id1;
+  phys_gjk_geom_id m_id2;
+};
+
+struct phys_gjk_cache_info {
+  math::Dir3 m_support_dir;
+  cached_simplex_info m_support_a;
+  cached_simplex_info m_support_b;
+  int32_t m_support_count;
+  phys_gjk_geom_id_pair_key m_key;
+  uint32_t m_flags;
+};
+
+class phys_collision_pair : phys_link_list_base<phys_collision_pair> {
+public:
+  broad_phase_info *m_bpi1;
+  broad_phase_info *m_bpi2;
+  float m_hit_time;
+  phys_gjk_cache_info *m_gjk_ci;
+};
+
+struct __attribute__((aligned(16))) contact_point_info {
+  struct pulse_sum_cache_info {
+    pulse_sum_cache m_ps_cache_list[3];
+  };
+
+  math::Dir3 m_normal;
+  float m_fric_coef;
+  float m_bounce_coef;
+  float m_max_restitution_vel;
+  int32_t m_flags;
+  int32_t m_point_pair_count;
+  math::Dir3 *m_list_b1_r_loc;
+  math::Dir3 *m_list_b2_r_loc;
+  contact_point_info::pulse_sum_cache_info *m_list_pulse_sum_cache_info;
+  contact_point_info *m_next_link;
+  const void *m_rb2_entity;
+  float m_translation_lambda;
+  phys_collision_pair *m_pcp;
+  rigid_body_constraint_contact *m_rbc_contact;
+};
+
+class rigid_body_constraint_contact : rigid_body_constraint {
+public:
+  phys_simple_link_list<contact_point_info> m_list_contact_point_info_buffer_1;
+  phys_simple_link_list<contact_point_info> m_list_contact_point_info_buffer_2;
+  uint32_t m_solver_priority;
+  phys_inplace_avl_tree_node<rigid_body_constraint_contact> m_avl_tree_node;
+  rigid_body_pair_key m_avl_key;
+};
+
+class rigid_body_constraint_hinge : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::Dir3 m_b1_r_loc;
+  math::Dir3 m_b2_r_loc;
+  math::Dir3 m_b1_axis_loc;
+  math::Dir3 m_b2_axis_loc;
+  math::Dir3 m_b1_a1_loc;
+  math::Dir3 m_b1_a2_loc;
+  math::Dir3 m_b1_ref_loc;
+  math::Dir3 m_b2_ref_min_loc;
+  math::Dir3 m_b2_ref_max_loc;
+  float m_damp_k;
+  uint32_t m_flags;
+  pulse_sum_cache m_ps_cache[8];
+};
+class rigid_body_constraint_distance : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::Dir3 m_b1_r_loc;
+  math::Dir3 m_b2_r_loc;
+  float m_min_distance;
+  float m_max_distance;
+  float m_next_max_distance;
+  float m_max_distance_vel;
+  float m_damp_coef;
+  uint32_t m_flags;
+  pulse_sum_cache m_ps_cache_list[3];
+};
+
+struct __attribute__((aligned(8))) ragdoll_joint_limit_info {
+  math::Dir3 m_b1_ud_loc;
+  float m_b1_ud_limit_co_;
+  float m_b1_ud_limit_si_;
+  float m_b1_ud_active_limit_co_;
+};
+
+class rigid_body_constraint_ragdoll : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::Dir3 m_b1_r_loc;
+  math::Dir3 m_b2_r_loc;
+  uint32_t m_flags;
+  pulse_sum_cache m_ps_cache_list[10];
+  __attribute__((aligned(8))) math::Dir3 m_b1_axis_loc;
+  math::Dir3 m_b2_axis_loc;
+  math::Dir3 m_b1_a1_loc;
+  math::Dir3 m_b1_a2_loc;
+  math::Dir3 m_b1_ref_loc;
+  math::Dir3 m_b2_ref_min_loc;
+  math::Dir3 m_b2_ref_max_loc;
+  ragdoll_joint_limit_info m_joint_limits[2];
+  int32_t m_joint_limits_count;
+  float m_damp_k;
+};
+class pulse_sum_normal : phys_link_list_base<pulse_sum_normal> {
+public:
+  __attribute__((aligned(16))) math::Dir3 m_ud;
+  math::Dir3 m_b1_r;
+  math::Dir3 m_b2_r;
+  math::Dir3 m_b1_ap;
+  math::Dir3 m_b2_ap;
+  float m_pulse_sum_min;
+  float m_pulse_sum_max;
+  float m_pulse_sum;
+  float m_right_side;
+  float m_big_dirt;
+  float m_cfm;
+  float m_denom;
+  float m_pulse_limit_ratio;
+  uint32_t m_flags;
+  pulse_sum_normal *m_pulse_parent;
+  pulse_sum_node *m_b1;
+  pulse_sum_node *m_b2;
+  pulse_sum_cache *m_pulse_sum_cache;
+};
+class __attribute__((aligned(8))) rigid_body_constraint_wheel
+    : rigid_body_constraint {
+public:
+  static constexpr symbol<thiscall_t<void(rigid_body_constraint_wheel *,
+                                          float torque, float delta_t)>>
+      add_wheel_torque{0x0, 0x14002A710};
+  static constexpr symbol<thiscall_t<void(rigid_body_constraint_wheel *)>>
+      set_no_collision{0x0, 0x14002B110};
+  static constexpr symbol<thiscall_t<void(
+      const rigid_body_constraint_wheel *, const math::RotTranMat43 *b1_mat,
+      math::Dir3 *const p0, math::Dir3 *const p1)>>
+      get_wheel_collide_segment{0x0, 0x14002AB70};
+  static constexpr symbol<
+      thiscall_t<void(rigid_body_constraint_wheel *, rigid_body *const rb,
+                      const math::Dir3 *hitp_loc, const math::Dir3 *hitn_loc)>>
+      set_collision{0x0, 0x14002B0B0};
+
+  pulse_sum_cache m_ps_cache_list[4];
+  pulse_sum_normal *m_ps_suspension;
+  pulse_sum_normal *m_ps_side_fric;
+  pulse_sum_normal *m_ps_fwd_fric;
+  math::Dir3 m_b1_local_offset;
+  math::RotTranMat43 m_b1_local_matrix;
+  math::RotTranMat43 m_b1_world_matrix;
+  math::Dir3 m_b2_hit_point_loc;
+  math::Dir3 m_b2_hit_normal_loc;
+  float m_wheel_radius;
+  float m_wheel_steering_angle;
+  uint32_t m_wheel_flags;
+  int32_t m_wheel_state;
+  float m_turning_radius_ratio_max_speed;
+  float m_turning_radius_ratio_accel;
+  float m_desired_speed_k;
+  float m_acceleration_factor_k;
+  float m_braking_factor_k;
+  float m_wheel_spin_vel;
+  float m_wheel_spin_angle;
+  float m_peel_out_spin_vel;
+  float m_wheel_fwd_move;
+  float m_wheel_local_fwd_vel;
+  float m_wheel_local_side_vel;
+  float m_wheel_friction;
+  float m_wheel_friction_hand_brake_fwd;
+  float m_wheel_friction_hand_brake_side;
+  float m_wheel_friction_surface_scale;
+  float m_wheel_hand_brake;
+  float m_roll_stability_factor;
+  float m_pitch_stability_factor;
+  float m_suspension_stiffness_k;
+  float m_suspension_damp_k;
+  float m_hard_limit_dist;
+  float m_penetration_depth;
+  float m_max_climb_angle;
+};
+class rigid_body_constraint_angular_actuator : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::RotTranMat43 m_target_mat;
+  math::RotTranMat43 m_next_target_mat;
+  math::Dir3 m_a_vel;
+  float m_power;
+  float m_power_scale;
+  bool m_enabled;
+  pulse_sum_cache m_ps_cache_list[3];
+};
+class rigid_body_constraint_upright : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::Dir3 m_b1_forward_axis_loc;
+  math::Dir3 m_b1_right_axis_loc;
+  math::Dir3 m_b1_up_axis_loc;
+  math::Dir3 m_b1_lean_axis_loc;
+  math::Dir3 m_b2_up_axis_loc;
+  math::Dir3 m_last_t_vel;
+  math::Dir3 m_last_a_vel;
+  float m_avg_side_force;
+  float m_avg_normal_force;
+  float m_lean_angle_calc_delta_t;
+  float m_lean_angle;
+  float m_lean_angle_multiplier;
+  float m_max_lean_angle;
+  float m_moving_average_total_time;
+  bool m_enabled;
+  pulse_sum_cache m_ps_cache_list[1];
+};
+class __attribute__((aligned(8))) rigid_body_constraint_custom_orientation
+    : public rigid_body_constraint {
+public:
+  pulse_sum_cache m_ps_cache_list[5];
+  bool m_active;
+  bool m_no_orientation_correction;
+  float m_torque_resistance_pitch_roll;
+  float m_torque_resistance_yaw;
+  float m_torque_resistance_yaw_max_collision_speed;
+  float m_upright_strength;
+  float m_desired_roll_angle;
+};
+
+class user_rigid_body : rigid_body {
+public:
+  const math::RotTranMat43 *m_dictator;
+  math::RotTranMat43 m_dictator_mat;
+};
+
+class rigid_body_constraint_custom_path : rigid_body_constraint {
+public:
+  __attribute__((aligned(16))) math::RotTranMat43 m_path_mat;
+  math::Dir3 b1_r_loc;
+  user_rigid_body *m_urb;
+  int32_t m_timestamp;
+  float m_spring_scale;
+  pulse_sum_cache m_list_psc[4];
+};
+
+struct BodyState {
+  vec3_t position;
+  vec3_t rotation[3];
+  vec3_t velocity;
+  vec3_t angVelocity;
+  vec3_t centerOfMassOffset;
+  vec3_t buoyancyBoxMin;
+  vec3_t buoyancyBoxMax;
+  float mass;
+  float friction;
+  float bounce;
+  int timeLastAsleep;
+  int id;
+  int buoyancy;
+  int underwater;
+  int owner;
+  PhysicsOwnerType owner_type;
+};
+
+class environment_rigid_body : public rigid_body {
+public:
+};
+
+typedef fastcallPtr_t<void()> phys_collision_callback_t;
+
+typedef fastcallPtr_t<bool(const broad_phase_base *b1,
+                           const broad_phase_base *b2)>
+    phys_should_collide_callback_t;
+
+typedef fastcallPtr_t<void(void *)> phys_debug_callback_t;
+
+class phys_sys {
+public:
+  static constexpr symbol<rigid_body_constraint_custom_orientation *(
+      rigid_body *const b1, rigid_body *const b2, const int no_error)>
+      create_rbc_custom_orientation{0x0, 0x14000B810};
+  static constexpr symbol<rigid_body *(const int no_error)> create_rigid_body{
+      0x0, 0x14000BC90};
+  static inline void destroy(rigid_body *const rb) {
+    static constexpr symbol<void(rigid_body *const rb)> sym{0x0, 0x14000BD50};
+    return sym(rb);
+  }
+
+  static inline void destroy(user_rigid_body *const rb) {
+    static constexpr symbol<void(user_rigid_body *const rb)> sym{0x0,
+                                                                 0x14000BEE0};
+    return sym(rb);
+  }
+  static constexpr symbol<void(rigid_body *const rb)> destroy_all_constraint{
+      0x0, 0x14000BF30};
+  static constexpr symbol<void(rigid_body *const rb)> fixup_wheel_constraints{
+      0x0, 0x14000C460};
+  static constexpr symbol<environment_rigid_body *()>
+      get_environment_rigid_body{0x0, 0x14000C4D0};
+  static constexpr symbol<void(phys_collision_callback_t collision_callback)>
+      set_collision_callback{0x0, 0x14000C500};
+  static constexpr symbol<void(const float max_delta_t)> set_max_delta_t{
+      0x0, 0x14000C510};
+  static constexpr symbol<void(const int max_v_iters)> set_v_tol{0x0,
+                                                                 0x14000C520};
+};
+
+enum TraceBrushType : int32_t {
+  TRACE_BRUSHTYPE_NONE = 0x0,
+  TRACE_BRUSHTYPE_BRUSH = 0x1,
 };
 
 } // namespace phys
