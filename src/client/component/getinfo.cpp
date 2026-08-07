@@ -6,6 +6,7 @@
 
 #include "friends.hpp"
 #include "network.hpp"
+#include "auth.hpp"
 #include "network_password.hpp"
 #include "workshop.hpp"
 #include "scheduler.hpp"
@@ -66,10 +67,7 @@ size_t get_bot_count() {
 
 int get_assigned_team() { return (rand() % 2) + 1; }
 
-bool is_host() {
-  return game::sv::SV_Loaded() &&
-         (game::is_server() || !game::com::Com_IsRunningUILevel());
-}
+bool is_host() { return game::server_running(); }
 
 struct component final : generic_component {
   void post_unpack() override {
@@ -131,8 +129,8 @@ struct component final : generic_component {
                game::is_server()
                    ? game::get_live_steam_server_description().value_or("")
                    : "");
-      info.set("xuid", utils::string::va(
-                           "%llX", steam::SteamUser()->GetSteamID().bits));
+      const auto friend_code = auth::get_guid();
+      info.set("xuid", utils::string::va("%llX", friend_code));
       info.set("mapname", game::get_mapname().value_or(""));
       info.set("isPrivate", game::password().value_or("").empty() ? "0" : "1");
       info.set("clients", std::to_string(get_client_count()));

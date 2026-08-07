@@ -75,9 +75,10 @@ template <typename T = vec_t> union vec2 {
 
 typedef vec2<vec_t> vec2_t;
 ASSERT_SIZE(vec2_t, sizeof(vec_t) * 2);
-ASSERT_POD(vec2_t);
+ASSERT_CPP03_POD(vec2_t);
 
 template <typename T = vec_t> union vec3 {
+  T v[3];
   struct {
     T x;
     T y;
@@ -85,7 +86,6 @@ template <typename T = vec_t> union vec3 {
   };
 
   vec2<T> xy;
-  T v[3];
 
   inline constexpr const T &operator[](size_t index) const { return v[index]; }
   inline constexpr T &operator[](size_t index) { return v[index]; }
@@ -165,7 +165,7 @@ template <typename T = vec_t> union vec3 {
 
 typedef vec3<vec_t> vec3_t;
 ASSERT_SIZE(vec3_t, sizeof(vec_t) * 3);
-ASSERT_POD(vec3_t);
+ASSERT_CPP03_POD(vec3_t);
 
 template <typename T = vec_t> union vec4 {
   T v[4];
@@ -263,7 +263,7 @@ template <typename T = vec_t> union vec4 {
 
 typedef vec4<vec_t> vec4_t;
 ASSERT_SIZE(vec4_t, sizeof(vec_t) * 4);
-ASSERT_POD(vec4_t);
+ASSERT_CPP03_POD(vec4_t);
 
 /*
   vec2: non-member operators and functions

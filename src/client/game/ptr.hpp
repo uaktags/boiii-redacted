@@ -7,6 +7,26 @@
 
 namespace game {
 
+#if defined(_WIN64)
+#include <intrin.h>
+inline uintptr_t PEB() {
+  // PEB pointer location on x64 Windows TEB (GS:[0x60])
+  return std::bit_cast<uintptr_t>(__readgsqword(0x60));
+}
+#elif defined(_WIN32)
+#include <intrin.h>
+inline uintptr_t PEB() {
+  // PEB pointer location on x86 Windows TEB (FS:[0x30])
+  return static_cast<uintptr_t>(__readfsdword(0x30));
+}
+#else
+inline uintptr_t PEB() {
+  return 0; // Fallback
+}
+#endif
+
+inline uint32_t PEB32() { return static_cast<uint32_t>(PEB()); }
+
 // Without ASLR
 constexpr uintptr_t ENGINE_MODULE_BASE = 0x140000000;
 constexpr uintptr_t ENGINE_ADDRESS_SPACE_SIZE = 0x030000000;
@@ -53,6 +73,13 @@ inline const T *select(const T *client_val, const T *server_val) {
 template <typename T> inline T *select(T *client_val, T *server_val) {
   return reinterpret_cast<T *>(select(reinterpret_cast<uintptr_t>(client_val),
                                       reinterpret_cast<uintptr_t>(server_val)));
+}
+
+template <typename T>
+inline volatile T *select(volatile T *client_val, volatile T *server_val) {
+  return reinterpret_cast<volatile T *>(
+      select(reinterpret_cast<uintptr_t>(client_val),
+             reinterpret_cast<uintptr_t>(server_val)));
 }
 
 /// @brief Checks if a pointer resides within any of the process's allocated

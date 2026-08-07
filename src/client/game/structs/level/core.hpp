@@ -2209,11 +2209,11 @@ struct playerState_s {
   int32_t killCamFlag;
   int32_t introShotsFired;
   struct {
-    ui::hud::hudelem_t current[31];
-    ui::hud::hudelem_t archival[31];
+    ui::he::hudelem_t current[31];
+    ui::he::hudelem_t archival[31];
   } hud;
   uint8_t _padding89EC[4];
-  ui::hud::serverHudMenu_t hudMenus[32];
+  ui::he::serverHudMenu_t hudMenus[32];
   struct {
     UIModelData modelData[8];
     int32_t modelNames[8];
@@ -2396,17 +2396,32 @@ struct ArchivedMatchState {
   int32_t umbraGates;
 };
 
-#pragma pack(push, 1)
 constexpr uint32_t MATCHSTATE_SIZE = 0x2A0;
-partial_def(MATCHSTATE_SIZE, struct, MatchState, {
+PACKED(partial_def(MATCHSTATE_SIZE, struct, MatchState, {
   uint32_t index;
   uint8_t _padding004[12];
   UnarchivedMatchState unarchivedState;
   ArchivedMatchState archivedState;
   uint8_t _padding28C[4];
-});
+}));
 ASSERT_SIZE(MatchState, MATCHSTATE_SIZE); // Correct
-#pragma pack(pop)
+
+PACKED(struct SpawnVarKeyValue {
+  const char *key;
+  const char *value;
+  int32_t type;
+  uint8_t _padding14[4];
+});
+
+PACKED(struct LinkerSpawnVar {
+  uint32_t numSpawnVars;
+  uint8_t _padding04[4];
+  SpawnVarKeyValue *spawnVars;
+  int32_t modelIndex;
+  vec3_t origin;
+  vec3_t angles;
+  uint8_t _padding2C[4];
+});
 
 } // namespace level
 } // namespace game
