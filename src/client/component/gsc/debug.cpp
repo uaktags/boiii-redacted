@@ -1,7 +1,10 @@
-#ifndef NDEBUG
 #include <std_include.hpp>
+#ifndef NDEBUG
 
 #include "gsc_funcs.hpp"
+
+#include <utils/flags.hpp>
+
 #include "loader/component_interface.hpp"
 #include "loader/component_loader.hpp"
 
@@ -64,6 +67,7 @@ inline void log_all_builtin_calls() {
 #ifndef LOG_TABLE_FUNCTION_CALL
 #define LOG_TABLE_FUNCTION_CALL(table, function)                               \
   {                                                                            \
+    const_cast<BuiltinFunctionDef *>(&table->function)->type.devblockOnly = 0; \
     using HookTag = decltype([] {});                                           \
     HookStateFunction<HookTag>::original_func = table->function.actionFunc;    \
     HookStateFunction<HookTag>::canon_id = table->function.canonId;            \
@@ -81,6 +85,7 @@ inline void log_all_builtin_calls() {
 #ifndef LOG_TABLE_METHOD_CALL
 #define LOG_TABLE_METHOD_CALL(table, method)                                   \
   {                                                                            \
+    const_cast<BuiltinMethodDef *>(&table->method)->type.devblockOnly = 0;     \
     using HookTag = decltype([] {});                                           \
     HookStateMethod<HookTag>::original_func = table->method.actionFunc;        \
     HookStateMethod<HookTag>::canon_id = table->method.canonId;                \
@@ -5730,7 +5735,11 @@ inline void log_all_builtin_calls() {
 }
 
 struct component final : server_component {
-  void post_unpack() override { log_all_builtin_calls(); }
+  void post_unpack() override {
+    if (utils::flags::has_flag("scr-trace")) {
+      log_all_builtin_calls();
+    }
+  }
 };
 } // namespace debug
 } // namespace gsc

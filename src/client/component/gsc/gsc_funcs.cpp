@@ -14,6 +14,7 @@
 
 #include "../command.hpp"
 #include "game/impl/scr/var.hpp"
+#include "game/impl/scr/scr.hpp"
 #include "game/impl/sv/sv.hpp"
 #include "gsc_funcs.hpp"
 
@@ -149,7 +150,7 @@ void reset_tracked_client_dvars() {
     if (game::valid_client_num(client_num)) {
 
       for (const std::string &dvar_name : dvars) {
-        game::sv::SV_GameSendServerCommand(
+        sv::SV_GameSendServerCommand(
             client_num, game::net::SV_CMD_CAN_IGNORE,
             utils::string::va("c \"reset %s\"", dvar_name.c_str()));
       }
@@ -479,6 +480,23 @@ void gscr_println(scriptInstance_t inst) {
 #endif
 }
 
+#ifdef NDEBUG
+void gscr_trace(scriptInstance_t inst) {}
+#else
+void gscr_trace(scriptInstance_t inst) {
+  uint32_t argc = Scr_GetNumParam(inst);
+  std::string out = "";
+  for (uint32_t idx = 0; idx < argc; ++idx) {
+    const char *msg = Scr_GetString(inst, idx);
+    if (msg && msg[0]) {
+      out += msg;
+    }
+  }
+
+  trace("[Scr] %s", out.c_str());
+}
+#endif
+
 void gscr_print(scriptInstance_t inst) {
   uint32_t argc = Scr_GetNumParam(inst);
   std::string out = "";
@@ -691,7 +709,7 @@ void gscr_getcommand(scriptInstance_t inst) {
 void gscr_say(scriptInstance_t inst) {
   const char *msg = Scr_GetString(inst, 0);
   if (msg)
-    game::sv::SV_GameSendServerCommand(
+    sv::SV_GameSendServerCommand(
         game::INVALID_CLIENT_INDEX, game::net::SV_CMD_CAN_IGNORE,
         utils::string::va("v \"%Iu %d %d %s\"", -1, 0, 0, msg));
 }
@@ -701,7 +719,7 @@ void send(scriptInstance_t inst, game::ClientNum_t client_num,
           uint32_t message_index) {
   const char *msg = Scr_GetString(inst, message_index);
   if (game::valid_client_num(client_num) && msg) {
-    game::sv::SV_GameSendServerCommand(
+    sv::SV_GameSendServerCommand(
         client_num, game::net::SV_CMD_CAN_IGNORE,
         utils::string::va("v \"%Iu %d %d %s\"", -1, 0, 0, msg));
   }
@@ -1173,6 +1191,53 @@ void gscr_ismenucached(scriptInstance_t inst) {
   }
 }
 
+void gscr_vector(scriptInstance_t inst) {
+  const uint32_t argc = Scr_GetNumParam(inst);
+  {
+
+    vec3_t result = vec3_t::fill(std::numeric_limits<float>::quiet_NaN());
+    if (argc > 0) {
+
+      if (argc == 1) {
+        switch (Scr_GetType(inst, 0)) {
+
+        case ScrVarType::VECTOR: {
+          Scr_GetVector(inst, 0, &result);
+          break;
+        }
+
+        case ScrVarType::POINTER: {
+          const std::vector<volatile var::ScrVarValue_t *> arg =
+              Scr_GetArray(inst, 0);
+
+          for (size_t i = 0; i < std::min(arg.size(), result.size()); ++i) {
+            result[i] = ScrVar_CastFloat(arg[i]);
+          }
+          break;
+        }
+        default: {
+          result.x = ScrVar_CastFloat(Scr_GetValue(inst, 0));
+          break;
+        }
+        }
+      } else {
+
+        result.x = ScrVar_CastFloat(Scr_GetValue(inst, 0));
+
+        if (argc > 1) {
+          result.y = ScrVar_CastFloat(Scr_GetValue(inst, 1));
+        }
+
+        if (argc > 2) {
+          result.z = ScrVar_CastFloat(Scr_GetValue(inst, 2));
+        }
+      }
+    }
+
+    push(inst, &result);
+  }
+}
+
 // =====================================================
 // Player name/tag overrides (server-only)
 // =====================================================
@@ -1285,8 +1350,8 @@ void set(scriptInstance_t inst, game::ClientNum_t client_num,
     client_dvar_changes[client_num].insert(*dvar_name);
   }
 
-  game::sv::SV_GameSendServerCommand(client_num, game::net::SV_CMD_CAN_IGNORE,
-                                     utils::string::va("c \"%s\"", dvar_cmd));
+  sv::SV_GameSendServerCommand(client_num, game::net::SV_CMD_CAN_IGNORE,
+                               utils::string::va("c \"%s\"", dvar_cmd));
 }
 
 void method(game::scr::scriptInstance_t inst, scr_entref_t *entref) {
@@ -1354,6 +1419,21 @@ Scr_GetMethodReverseLookup_SearchCustom(BuiltinMethod method) {
   }
   return Scr_GetMethodReverseLookup_hook.invoke<ScrVarCanonicalName_t>(method);
 }
+void PlayerCmd_IsHost_DelegateToFirstClient(scriptInstance_t inst,
+                                            scr_entref_t *entref) {
+  if (entref->classnum == 0) {
+    const level::gentity_t *ent = level::entity(entref->u.entnum);
+    if (ent && ent->client) {
+      push(inst, ent->client->sess.cs.clientIndex == game::CLIENT_INDEX_0);
+    } else {
+      Scr_ObjectError(
+          SCRIPTINSTANCE_SERVER,
+          utils::string::va("entity %i is not a player", entref->u.entnum));
+    }
+  } else {
+    Scr_ObjectError(SCRIPTINSTANCE_SERVER, "not an entity");
+  }
+}
 
 } // namespace
 
@@ -1384,6 +1464,7 @@ struct component final : generic_component {
     register_builtin("tell", gscr_tell::func, 2);
     register_builtin("tell", gscr_tell::method, 1);
     register_variadic_builtin("println", gscr_println, 0);
+    register_variadic_builtin("trace", gscr_trace, 0);
     register_variadic_builtin("print", gscr_print, 0);
     register_variadic_builtin("printf", gscr_printf, 1);
 
@@ -1448,8 +1529,29 @@ struct component final : generic_component {
     register_builtin("conststring", gscr_conststring, 1);
     register_builtin("isstruct", gscr_isstruct, 1);
     register_builtin("ismenucached", gscr_ismenucached, 1);
+    register_builtin("vector", gscr_vector, 0, 3);
 
     apply_hudelem_hooks();
+
+    /*
+      In dedicated server, there is no host player.
+
+      This breaks custom maps and mods that require the host player to configure
+      the game using an options menu before any clients are permitted to leave
+      the menu and begin the game.
+
+      This is generally fixed via map-specific GSC scripts that automatically
+      configure the game and close configuration menus.
+
+      To ensure these maps allow game configuration by _one_ player by default,
+      the following hook modifies the `ishost` builtin function to return
+      \`true\` if the player has `clientIndex` `0`, and false otherwise.
+    */
+    if (game::is_server()) {
+      const_cast<BuiltinMethodDef *>(
+          &game::scr::builtin::table::player_methods->IsHost)
+          ->actionFunc = PlayerCmd_IsHost_DelegateToFirstClient;
+    }
 
     game_event::on_g_shutdown_game([] {
       function_replacements.clear();

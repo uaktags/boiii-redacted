@@ -412,30 +412,34 @@ void Sys_WaitForSingleObject_Safe(HANDLE *event) {
   }
 }
 
-game::cmd::xcommand_t original_fast_restart{};
-game::cmd::xcommand_t original_map_restart{};
-
-game::cmd::cmd_function_s *find_command(const char *name) {
-  game::cmd::cmd_function_s *command = game::cmd::cmd_functions.get();
-  for (size_t i = 0; command && i < 2000; ++i, command = command->next) {
-    if (command->name && _stricmp(command->name, name) == 0)
-      return command;
+#ifndef NDEBUG
+utils::hook::detour PhysPrint_hook;
+void PhysPrint_AllOutputs(const char *fmt, ...) {
+  void *callerAddr = _ReturnAddress();
+  va_list ap;
+  va_start(ap, fmt);
+  int32_t len = vsnprintf(nullptr, 0, fmt, ap);
+  va_end(ap);
+  va_start(ap, fmt);
+  std::vector<char> infoBuf(len + 1);
+  vsnprintf(infoBuf.data(), infoBuf.size(), fmt, ap);
+  va_end(ap);
+  const char *msg = infoBuf.data();
+  if (msg == nullptr) {
+    msg = "";
   }
-  return nullptr;
-}
 
-template <const game::RestartMethod_t RestartMethod>
-void SV_RestartCmd_RotateOrDefault() {
-  if (game::get_sv_running() &&
-      !game::com::Com_SessionMode_IsMode(game::eModes::COUNT) /* main menu */) {
-    game::cbuf::Cbuf_AddText(0, "map_rotate\n");
-  } else {
-    game::sv::SV_MapRestart(RestartMethod);
-  }
-}
+  const char *formatted_msg =
+      utils::string::va("[Phys][Print(0x%p)]%s%s", game::derelocate(callerAddr),
+                        msg[0] ? " " : "", msg);
+  fprintf(stdout, "%s\n", formatted_msg);
+  fflush(stdout);
 
-utils::hook::detour SV_FastRestart_f_hook;
-utils::hook::detour SV_MapRestart_f_hook;
+  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s\n",
+                        formatted_msg);
+  game::trace("%s", formatted_msg);
+}
+#endif
 
 utils::hook::detour G_RegisterSoundWait_hook;
 #ifndef NDEBUG
@@ -482,12 +486,9 @@ struct component final : generic_component {
     utils::hook::jump(game::select(0x141A7BCF0, 0x1402CB900),
                       scr_get_num_expected_players, true);
 
-    SV_MapRestart_f_hook.create(
-        game::sv::SV_MapRestart_f.get(),
-        SV_RestartCmd_RotateOrDefault<game::RestartMethod_t::FULL>);
-    SV_FastRestart_f_hook.create(
-        game::sv::SV_FastRestart_f.get(),
-        SV_RestartCmd_RotateOrDefault<game::RestartMethod_t::ROUND>);
+#ifndef NDEBUG
+    PhysPrint_hook.create(game::phys::PhysPrint, PhysPrint_AllOutputs);
+#endif
   } // namespace patches
 };
 } // namespace patches
