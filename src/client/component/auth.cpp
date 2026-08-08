@@ -280,7 +280,11 @@ bool send_fragmented_connect_packet(game::ControllerIndex_t controllerIndex,
 
          const auto &fragment_packet = packet_buffer.get_buffer();
 
-         if (network_password::is_password_set()) {
+         // The engine uses this hook for its startup self-connect as well as
+         // remote joins. NET_SendPacket only accepts IP destinations; native
+         // NET_OutOfBandData must retain ownership of NA_LOOPBACK packets.
+         if (network_password::is_password_set() && adr &&
+             network::is_ip_address(*adr)) {
            std::string protected_packet{"\xFF\xFF\xFF\xFF", 4};
            protected_packet.append(fragment_packet);
            protected_packet = network_password::protect_packet(

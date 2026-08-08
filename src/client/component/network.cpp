@@ -1,31 +1,38 @@
-#include <std_include.hpp>
-#include <loader/component_loader.hpp>
-#include <game/game.hpp>
 #include <game/fragment_handler.hpp>
+#include <game/game.hpp>
 #include <game/utils.hpp>
+#include <loader/component_loader.hpp>
+#include <std_include.hpp>
 
 #include "command.hpp"
+#include "lan.hpp"
 #include "network.hpp"
 #include "network_password.hpp"
 #include "party.hpp"
 #include "scheduler.hpp"
+#include "security.hpp"
 
-#include <utils/hook.hpp>
-#include <utils/string.hpp>
-#include <utils/finally.hpp>
-#include <str.hpp>
-#include <string>
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <str.hpp>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utils/finally.hpp>
+#include <utils/hook.hpp>
+#include <utils/string.hpp>
 
 namespace network {
 namespace {
 utils::hook::detour handle_packet_internal_hook{};
 std::mutex protected_addresses_mutex;
 std::unordered_set<game::net::netadr_t> protected_addresses{};
+
+bool is_lan_auth_command(const std::string_view command) {
+  return command == "lanauth" || command == "lanauthchallenge" ||
+         command == "lanauthproof" || command == "lanauthresponse";
+}
 
 std::unordered_map<std::string, callback> &get_callbacks() {
   static std::unordered_map<std::string, callback> callbacks{};
@@ -55,12 +62,15 @@ int64_t handle_command(const game::net::netadr_t *address, const char *command,
     protected_packet = protected_addresses.contains(*address);
   }
 
-  protected_packet = network_password::is_password_set() &&
+  protected_packet = address->type != game::net::NA_LOOPBACK &&
+                     network_password::is_password_set() &&
+                     !is_lan_auth_command(cmd_string) &&
                      (protected_packet || cmd_string == "connect");
 
   if (callback_entry == callbacks.end() && protected_packet) {
     // Authentication failures cannot use the negotiated password envelope.
-    // Only let the engine consume an error from the host currently being joined.
+    // Only let the engine consume an error from the host currently being
+    // joined.
     return cmd_string == "error" && party::is_host(*address);
   }
 
@@ -143,8 +153,14 @@ void create_ip_socket() {
     throw std::runtime_error("Unable to create socket");
   }
 
-  constexpr char broadcast = 1;
-  setsockopt(s, SOL_SOCKET, SO_BROADCAST, &broadcast, sizeof(broadcast));
+  constexpr BOOL broadcast = TRUE;
+  if (setsockopt(s, SOL_SOCKET, SO_BROADCAST,
+                 reinterpret_cast<const char *>(&broadcast),
+                 sizeof(broadcast)) == SOCKET_ERROR) {
+    closesocket(s);
+    s = INVALID_SOCKET;
+    throw std::runtime_error("Unable to enable socket broadcasts");
+  }
 
   socket_set_blocking(s, false);
 
@@ -200,7 +216,7 @@ void con_restricted_execute_buf_stub(int local_client_num,
 
 uint64_t handle_packet_internal_stub(
     const game::ControllerIndex_t controller_index,
-    const game::net::netadr_t from_adr, const game::XUID from_xuid,
+    game::net::netadr_t from_adr, const game::XUID from_xuid,
     const game::lobby::LobbyType lobby_type, const uint64_t dest_module,
     game::net::msg::msg_t *msg) {
   if (from_adr.type != game::net::NA_LOOPBACK && game::is_server() &&
@@ -208,9 +224,20 @@ uint64_t handle_packet_internal_stub(
     return 0;
   }
 
-  // Network security: inspect packet for exploits before processing
   if (from_adr.type != game::net::NA_LOOPBACK) {
-    return 0; // drop malicious packet
+    const bool valid_lobby_type =
+        lobby_type == game::lobby::LobbyType::PRIVATE ||
+        lobby_type == game::lobby::LobbyType::GAME;
+    if (game::is_server() || !valid_lobby_type ||
+        !lan::is_zombies_system_link() || !lan::is_same_subnet(from_adr) ||
+        !party::is_lan_peer_authorized(from_adr) ||
+        !ezzsec::AllowLanPacket(msg)) {
+      return 0;
+    }
+
+    // Connectionless boiii traffic uses NA_RAWIP, while BO3's native lobby
+    // state machine and NET_SendPacket expect their peer records as NA_IP.
+    from_adr.type = game::net::NA_IP;
   }
 
   return handle_packet_internal_hook.invoke<bool>(controller_index, from_adr,
@@ -263,7 +290,8 @@ void send(const game::net::netadr_t &address, const std::string &command,
     protected_packet = protected_addresses.contains(address);
   }
 
-  if (network_password::is_password_set() && protected_packet) {
+  if (network_password::is_password_set() && protected_packet &&
+      !is_lan_auth_command(utils::string::to_lower(command))) {
     packet = network_password::protect_packet(packet, command.size() + 5);
   }
 
@@ -421,7 +449,6 @@ struct component final : generic_component {
     // Recreate NET_SendPacket to increase max packet size
     // utils::hook::jump(game::select(0x1423323B0, 0x140596E40),
     // net_sendpacket_stub);
-
     // set initial connection state to challenging
     utils::hook::set<uint32_t>(
         game::select(0x14134C6E0, 0x14018E574),
@@ -460,7 +487,9 @@ struct component final : generic_component {
     // TODO: Fix that
     scheduler::once(create_ip_socket, scheduler::main);
 
-    // Kill lobby system
+    // Admit only validated private System Link lobby traffic from the local
+    // physical subnet. Internet and dedicated-server native lobby traffic
+    // remains disabled.
     handle_packet_internal_hook.create(game::select(0x141EF7FE0, 0x1404A5B90),
                                        &handle_packet_internal_stub);
 

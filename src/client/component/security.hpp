@@ -1,10 +1,11 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
-#include <unordered_map>
 #include <functional>
+#include <unordered_map>
 
 #include <game/game.hpp>
+#include <utils/lan_policy.hpp>
 
 namespace ezzsec {
 // =====================================================================
@@ -1029,5 +1030,55 @@ inline bool InspectPacket(game::net::msg::msg_t *msg) {
   }
 
   return false; // packet is OK
+}
+
+// Fail-closed admission for the native lobby protocol. This is intentionally
+// narrower than InspectPacket: only message families required by a private
+// Zombies System Link lobby are admitted, and every decoding failure drops the
+// datagram.
+inline bool AllowLanPacket(game::net::msg::msg_t *msg) {
+  if (game::is_server() || msg == nullptr || msg->data == nullptr ||
+      msg->cursize <= 0 || msg->readcount < 0 ||
+      msg->readcount >= msg->cursize) {
+    return false;
+  }
+
+  const uint32_t remaining =
+      static_cast<uint32_t>(msg->cursize - msg->readcount);
+  if (remaining == 0 || remaining > 0x2000) {
+    return false;
+  }
+
+  fn::initialize();
+
+  char data[0x2000]{};
+  game::net::msg::msg_t msg_copy = *msg;
+  fn::MSG_ReadData(&msg_copy, data, static_cast<int>(remaining));
+  if (msg_copy.overflowed) {
+    return false;
+  }
+
+  game::lobby::LobbyMsg lobby_msg{};
+  if (!fn::LobbyMsgRW_PrepReadData(&lobby_msg, data,
+                                   static_cast<int>(remaining)) ||
+      lobby_msg.msgType < MESSAGE_TYPE_INFO_REQUEST ||
+      lobby_msg.msgType >= MESSAGE_TYPE_COUNT) {
+    return false;
+  }
+
+  if (!utils::lan_policy::is_allowed_lobby_message(lobby_msg.msgType)) {
+    return false;
+  }
+
+  auto &callbacks = get_packet_callbacks();
+  const auto callback = callbacks.find(static_cast<uint8_t>(lobby_msg.msgType));
+  if (callback != callbacks.end()) {
+    callback->second(&lobby_msg.msgType, reinterpret_cast<char *>(&lobby_msg));
+    if (lobby_msg.msgType == 0xFF) {
+      return false;
+    }
+  }
+
+  return true;
 }
 } // namespace ezzsec

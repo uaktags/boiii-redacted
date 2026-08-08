@@ -419,6 +419,17 @@ paths, ext.dll/t7patch.dll architecture, and unresolved security gaps, see
 The detailed binary mapping is maintained in
 [docs/ext-t7patch-security-map.md](docs/ext-t7patch-security-map.md).
 
+The one-time Airyzz comparison and its adoption decisions are recorded in
+[docs/airyzz-review.md](docs/airyzz-review.md). Airyzz is not a tracked
+upstream.
+
+The proposed unit, fuzz, integration, and benchmark strategy is in
+[docs/security-performance-verification.md](docs/security-performance-verification.md).
+
+The native Zombies System Link discovery, pre-game lobby flow, security
+boundary, and two-PC acceptance procedure are documented in
+[docs/lan-system-link.md](docs/lan-system-link.md).
+
 ---
 
 ## GSC Scripting Additions

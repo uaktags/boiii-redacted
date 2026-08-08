@@ -114,7 +114,7 @@ ext.dll patches the exact game site `0x1401155D5` with a generated trampoline:
 - An invalid index returns without writing.
 
 Current boiii source fixes the same site in
-`src/client/component/dedicated_patches2.cpp` by NOPing the vulnerable
+`src/client/component/dedicated/networking.cpp` by NOPing the vulnerable
 seven-byte inlined write. The source identifies it explicitly as the "TeamOps
 arbitrary write fix". This was added in commit `30cf99ca` together with other
 security patches.
@@ -428,17 +428,19 @@ The current Ghidra programs use these tags for navigation:
 
 ## Standalone Client Parity Status
 
-All critical security, compatibility, and performance fixes reverse-engineered
-from `ext.dll` and `t7patch.dll` are now natively implemented within `boiii`'s
-C++ codebase. The client runs completely standalone without requiring `ext.dll`
-or `t7patch.dll` to be present.
+All mapped critical security, compatibility, and performance behaviors
+reverse-engineered from `ext.dll` and `t7patch.dll` now have native source
+implementations in `boiii`. The client can run standalone without requiring
+`ext.dll` or `t7patch.dll` to be present. This is source and mapping parity, not
+yet proof of runtime or security equivalence; the required evidence is tracked
+in [security-performance-verification.md](security-performance-verification.md).
 
 - **`security_compat.cpp`**: Native replacements for `qmemcpy` length clamping,
   `sl` command handling, migration response NOPs, and menu response filtering
   when `ext.dll` is missing.
 - **`client_command.cpp` & `cmdguard.cpp`**: Server-only command guards
   (`killserverpc`, `endgame`, `endround`, `restart_level_zm`).
-- **`dedicated_patches2.cpp`**: TeamOps arbitrary write fix.
+- **`dedicated/networking.cpp`**: TeamOps arbitrary write fix.
 - **`auth.cpp`**: ECC challenge/connect flow, server-side signature
   verification, and password-envelope wrapping of fragmented `connect` packets.
 - **`network.cpp` & `network_password.cpp`**: FNV-1a network password
@@ -451,8 +453,9 @@ or `t7patch.dll` to be present.
 
 1. Dedicated Server Executable (`BlackOps3_UnrankedDedicatedServer.exe`) is now
    available in `/home/tim/t7_full_game/`. Symbol relocations for dedicated mode
-   are handled via `boiii`'s `_g` runtime relocator in `client_command.cpp`
-   (`0x14052F81B_g`) and `dedicated_patches.cpp`.
+   are handled via `boiii`'s `_g` runtime relocator, including the
+   `client_command.cpp` call site at `0x14052F81B_g` and the components under
+   `src/client/component/dedicated/`.
 2. Identify the t7patch implementation, if any, corresponding to ext.dll's
    challenge/ECC flow.
 3. Establish exact public exploit/CVE names only after matching each behavior to

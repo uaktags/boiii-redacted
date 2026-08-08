@@ -10,16 +10,24 @@ extern game::EngineDependentDvarMut cl_connected_to_dedi;
 using query_callback_func = void(bool success, const game::net::netadr_t &host,
                                  const utils::info_string &info, uint32_t ping);
 using query_callback = std::function<query_callback_func>;
+using lan_query_response_callback =
+    std::function<void(const game::net::netadr_t &host,
+                       const utils::info_string &info, uint32_t ping)>;
+using lan_query_complete_callback = std::function<void()>;
 
 // Connect directly without passing through the console/browser route hook.
 void connect(const game::net::netadr_t &target);
 
 void query_server(const game::net::netadr_t &host, query_callback callback);
+void query_lan_servers(lan_query_response_callback response_callback,
+                       lan_query_complete_callback complete_callback);
+void cancel_lan_query();
 
 game::net::netadr_t get_connected_server(
     game::LocalClientNum_t localClientNum = game::LOCAL_CLIENT_0);
 
 bool is_host(const game::net::netadr_t &addr);
+bool is_lan_peer_authorized(const game::net::netadr_t &addr);
 
 void join_session(const game::net::netadr_t &addr, const std::string &hostname,
                   uint64_t xuid, game::eModes mode);

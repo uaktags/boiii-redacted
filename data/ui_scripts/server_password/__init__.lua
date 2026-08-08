@@ -15,13 +15,20 @@ end
 local function getSavedPassword(controller)
   local saved = ""
   pcall(function()
-    if Dvar.password then
-      saved = Dvar.password:get() or ""
+    if Dvar.net_password then
+      saved = Dvar.net_password:get() or ""
     end
   end)
   if saved == "" then
     pcall(function()
-      saved = Engine.DvarString(controller, "password") or ""
+      saved = Engine.DvarString(controller, "net_password") or ""
+    end)
+  end
+  if saved == "" then
+    pcall(function()
+      if Dvar.password then
+        saved = Dvar.password:get() or ""
+      end
     end)
   end
   return tostring(saved)
@@ -86,6 +93,7 @@ local function ensureKeyboardHandler(menu)
       pendingJoin = nil
       local enteredPassword = event.input or ""
       Engine.SetDvar("password", enteredPassword)
+      Engine.SetDvar("net_password", enteredPassword)
       Engine.SetDvar("live_steam_server_password", enteredPassword)
       connectToServer(join.controller, join.serverIndex, join.name, join.connectAddr)
       GoBack(join.widget, join.controller)

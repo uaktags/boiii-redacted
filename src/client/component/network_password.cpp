@@ -8,6 +8,7 @@
 #include "scheduler.hpp"
 
 #include <utils/cryptography.hpp>
+#include <utils/flags.hpp>
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 
@@ -60,8 +61,8 @@ bool constant_time_equal(const std::string_view left,
 
   uint8_t difference = 0;
   for (size_t i = 0; i < left.size(); ++i) {
-    difference |= static_cast<uint8_t>(left[i]) ^
-                  static_cast<uint8_t>(right[i]);
+    difference |=
+        static_cast<uint8_t>(left[i]) ^ static_cast<uint8_t>(right[i]);
   }
 
   return difference == 0;
@@ -81,7 +82,7 @@ password_snapshot get_password_snapshot() {
   password_state.set = !password.empty();
   return password_state;
 }
-}
+} // namespace
 
 std::string get_password_hash_string() {
   // Retained only for connecting to older servers that advertise this hash.
@@ -93,9 +94,7 @@ std::string get_password_hash_string() {
   return utils::string::va("%llu", snapshot.current);
 }
 
-bool is_password_set() {
-  return get_password_snapshot().set;
-}
+bool is_password_set() { return get_password_snapshot().set; }
 
 uint64_t current_hash() { return get_password_snapshot().current; }
 
@@ -118,15 +117,15 @@ std::string protect_packet(const std::string_view packet,
       return {};
     }
 
-    protected_packet.insert(marker_offset, 1,
-                            static_cast<char>(marker));
+    protected_packet.insert(marker_offset, 1, static_cast<char>(marker));
     protected_packet.insert(marker_offset + 1, 1,
                             static_cast<char>(snapshot.current >> 24));
   }
 
   const uint16_t checksum = static_cast<uint16_t>(
-      calculate_checksum(reinterpret_cast<const uint8_t *>(protected_packet.data()),
-                         protected_packet.size()) ^
+      calculate_checksum(
+          reinterpret_cast<const uint8_t *>(protected_packet.data()),
+          protected_packet.size()) ^
       static_cast<uint16_t>(snapshot.current));
   protected_packet.push_back(static_cast<char>(checksum & 0xFF));
   protected_packet.push_back(static_cast<char>(checksum >> 8));
@@ -202,8 +201,14 @@ struct component final : generic_component {
   void post_unpack() override {
     scheduler::once(
         [] {
+          std::string initial_password;
+          if (utils::flags::has_flag("lan-local-test")) {
+            initial_password =
+                utils::flags::get<std::string>("lan-test-password")
+                    .value_or("");
+          }
           net_password_dvar = game::register_dvar_string(
-              "net_password", "", game::DVAR_NONE,
+              "net_password", initial_password.c_str(), game::DVAR_NONE,
               "Network password for private server isolation");
         },
         scheduler::pipeline::main);

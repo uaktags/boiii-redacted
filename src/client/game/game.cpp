@@ -13,12 +13,11 @@ bool quiet_crash() {
   return quiet_crash;
 }
 
-#ifndef NDEBUG
 bool alias() {
-  static const bool alias = utils::flags::has_flag("alias");
+  static const bool alias = utils::flags::has_flag("alias") ||
+                            utils::flags::has_flag("lan-test-guest");
   return alias;
 }
-#endif
 
 bool is_headless() {
   static const bool headless = utils::flags::has_flag("headless");

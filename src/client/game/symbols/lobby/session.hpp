@@ -11,6 +11,10 @@ WEAK symbol<int(LobbySession *lobbySession, LobbyClientType clientType)>
     LobbySession_GetClientCount{0x141ED8B30, 0x0};
 
 WEAK symbol<lobby::Join> s_join{0x15574A640};
+WEAK symbol<bool(int32_t actionId, ControllerIndex_t controllerIndex,
+                 LobbyType sourceLobbyType, LobbyType targetLobbyType)>
+    LobbyJoin_Begin{0x141ED94D0};
+WEAK symbol<bool()> LobbyJoinSource_Finalize{0x141ED94F0};
 WEAK symbol<SessionClient *(
     ControllerIndex_t controllerIndex, LobbySession *lobbySession, XUID xuid,
     const char *gamertag, dw::net::bdCommonAddrRef commonAdr, LobbyID lobbyID,

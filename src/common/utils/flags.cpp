@@ -97,6 +97,19 @@ int32_t parse_flags(int argc, char *argv[]) {
       .help("Launch in windowed mode")
       .default_value(false)
       .implicit_value(true);
+  program.add_argument("-lan-local-test", "--lan-local-test")
+      .help("Allow LAN System Link peers on this machine's own IPv4 address; "
+            "intended only for isolated multi-instance testing")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("-lan-test-guest", "--lan-test-guest")
+      .help("Use an alternate local identity key for the guest side of a "
+            "multi-instance LAN test")
+      .default_value(false)
+      .implicit_value(true);
+  program.add_argument("-lan-test-password", "--lan-test-password")
+      .help("Set net_password at startup for a -lan-local-test session")
+      .default_value(std::string(""));
   program.add_argument("-safe", "--safe")
       .help("Launch in safe mode (disable mods)")
       .default_value(false)

@@ -5,6 +5,8 @@
 #include <steam/steam.hpp>
 
 #include "friends.hpp"
+#include "lan.hpp"
+#include "name.hpp"
 #include "network.hpp"
 #include "auth.hpp"
 #include "network_password.hpp"
@@ -98,7 +100,13 @@ struct component final : generic_component {
       utils::info_string info{};
       info.set("challenge", std::string{data.begin(), data.end()});
       info.set("gamename", "T7");
-      info.set("hostname", game::hostname().value_or(""));
+      std::string hostname{game::hostname().value_or("")};
+      if (hostname.empty()) {
+        if (const char *player_name = name::get_player_name()) {
+          hostname = player_name;
+        }
+      }
+      info.set("hostname", hostname);
       info.set("gametype", game::gametype().value_or(""));
       /*
          Unsure why this is commented out, but important notes in case of future
@@ -131,7 +139,8 @@ struct component final : generic_component {
                    : "");
       const auto friend_code = auth::get_guid();
       info.set("xuid", utils::string::va("%llX", friend_code));
-      info.set("mapname", game::get_mapname().value_or(""));
+      const std::string mapname{game::get_mapname().value_or("")};
+      info.set("mapname", mapname);
       info.set("isPrivate", game::password().value_or("").empty() ? "0" : "1");
       info.set("clients", std::to_string(get_client_count()));
       info.set("bots", std::to_string(get_bot_count()));
@@ -142,8 +151,11 @@ struct component final : generic_component {
                                game::com::Com_SessionMode_GetMode())));
       info.set("gamemode", std::to_string(static_cast<int32_t>(
                                game::com::Com_SessionMode_GetGameMode())));
+      const bool pregame_lobby =
+          !game::is_server() && (mapname.empty() || mapname == "core_frontend");
       info.set("sv_running", std::to_string(game::server_running()));
-      info.set("lobby_state", game::server_running() ? "active" : "pregame");
+      info.set("lobby_state", pregame_lobby ? "pregame" : "active");
+      info.set("systemlink_lan", lan::is_zombies_system_link() ? "1" : "0");
       info.set("dedicated", game::is_server() ? "1" : "0");
       info.set("hc",
                std::to_string(game::com::gts::Com_GametypeSettings_GetUInt(
