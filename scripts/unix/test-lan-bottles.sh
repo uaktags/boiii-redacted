@@ -11,6 +11,7 @@ lan_password="${BOIII_LAN_PASSWORD:-}"
 ready_timeout="${BOIII_LAN_READY_TIMEOUT:-240}"
 release_binary="${repo_root}/build/bin/x64/Release/boiii.exe"
 test_binary="${game_dir}/boiii-lan-test.exe"
+bottles_prefixes="${BOIII_BOTTLES_PREFIXES:-${HOME}/.var/app/com.usebottles.bottles/data/bottles/bottles}"
 
 if ! [[ "${ready_timeout}" =~ ^[1-9][0-9]*$ ]]; then
   echo "BOIII_LAN_READY_TIMEOUT must be a positive integer (seconds)." >&2
@@ -63,6 +64,8 @@ common_args=(
   -nosteam
   -windowed
   -lan-local-test
+  -filelogs
+  -lan-trace
   +set r_fullscreen 0
 )
 
@@ -81,7 +84,7 @@ launch_client() {
 
   flatpak run --command=bottles-cli com.usebottles.bottles run \
     -b "${bottle}" -e "${test_binary}" --args-replace -- \
-    "${common_args[@]}" "$@" +set net_port "${port}" +name "${player_name}" \
+    "${common_args[@]}" "$@" +set net_port "${port}" +set name "${player_name}" \
     >"${log_file}" 2>&1 &
   launched_pid="$!"
 }
@@ -111,13 +114,87 @@ wait_for_udp_port() {
   return 1
 }
 
+console_log_paths() {
+  local bottle="$1"
+  shopt -s nullglob
+  printf '%s\n' \
+    "${bottles_prefixes}/${bottle}/drive_c/users/"*"/AppData/Local/boiii/logs/boiii_console.log"
+  shopt -u nullglob
+}
+
+truncate_console_logs() {
+  local src
+  while IFS= read -r src; do
+    [[ -f "${src}" ]] || continue
+    : > "${src}"
+  done < <(console_log_paths "${host_bottle}"; console_log_paths "${guest_bottle}")
+}
+
+wait_for_host_frontend() {
+  local log_file="$1"
+  local elapsed=0
+
+  # DXVK recreates the swapchain ("Buffer size:") as the host's frontend settles
+  # on its real resolution. A process stuck in shader warm-up only ever presents
+  # the single 800x600 startup window, which is the documented two-instance
+  # black-window hazard. Wait until a non-startup size appears so the guest's
+  # warm-up does not collide with a still-loading host. The host *can* be ready
+  # at 800x600 (windowed PRIVATE GAME) even when DXVK never resizes, so also
+  # accept the boiii frontend asset as loaded as a readiness signal.
+  while (( elapsed < ready_timeout )); do
+    if rg -N 'Buffer size:' "${log_file}" | rg -qv '800x600'; then
+      return 0
+    fi
+
+    # Fallback: frontend fastfiles loaded => host is at menu even at 800x600.
+    # Pick the non-empty console log among the Wine users (steamuser is empty).
+    local console_log
+    console_log=""
+    while IFS= read -r console_log_candidate; do
+      [[ -s "${console_log_candidate}" ]] || continue
+      console_log="${console_log_candidate}"
+      break
+    done < <(console_log_paths "${host_bottle}")
+    if [[ -n "${console_log}" ]] && rg -q "XZONE_LOADED.*core_frontend" "${console_log}" 2>/dev/null; then
+      # Give the frontend a moment to settle after the fastfile.
+      sleep 3
+      return 0
+    fi
+
+    if ! kill -0 "${host_pid}" 2>/dev/null; then
+      echo "The host exited before its frontend finished loading. See ${log_file}" >&2
+      return 1
+    fi
+
+    sleep 2
+    ((elapsed += 2))
+  done
+
+  echo "Host has not rendered past the 800x600 startup window after ${ready_timeout}s." >&2
+  echo "It may still be in DXVK warm-up; starting the guest now risks a frozen host." >&2
+}
+
+copy_console_logs() {
+  local bottle src dest
+  for bottle in "${host_bottle}" "${guest_bottle}"; do
+    while IFS= read -r src; do
+      [[ -s "${src}" ]] || continue
+      dest="${log_dir}/${bottle,,}-console.log"
+      cp -f "${src}" "${dest}"
+      echo "Copied ${bottle} console log to ${dest}"
+    done < <(console_log_paths "${bottle}")
+  done
+}
+
 launched_pid=""
+truncate_console_logs
 launch_client "${host_bottle}" 27017 LAN-Host "${log_dir}/host.log"
 host_pid="${launched_pid}"
 echo "Host launch started (PID ${host_pid}); waiting for engine initialization..."
 wait_for_udp_port "${host_pid}" 27017 "${log_dir}/host.log"
-echo "Host UDP 27017 is ready; starting the guest..."
-sleep 5
+echo "Host UDP 27017 is ready; waiting for the frontend to finish loading..."
+wait_for_host_frontend "${log_dir}/host.log"
+echo "Host frontend is ready; starting the guest..."
 
 launch_client "${guest_bottle}" 27018 LAN-Guest "${log_dir}/guest.log" \
   -lan-test-guest
@@ -138,3 +215,4 @@ echo "Close both game windows normally when the test is complete."
 echo "This harness will remain attached until both Bottles launchers exit."
 
 wait "${host_pid}" "${guest_pid}"
+copy_console_logs

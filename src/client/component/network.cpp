@@ -12,6 +12,7 @@
 #include "scheduler.hpp"
 #include "security.hpp"
 
+#include <cstdarg>
 #include <cstdint>
 #include <functional>
 #include <mutex>
@@ -20,6 +21,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utils/finally.hpp>
+#include <utils/flags.hpp>
 #include <utils/hook.hpp>
 #include <utils/string.hpp>
 
@@ -219,8 +221,26 @@ uint64_t handle_packet_internal_stub(
     game::net::netadr_t from_adr, const game::XUID from_xuid,
     const game::lobby::LobbyType lobby_type, const uint64_t dest_module,
     game::net::msg::msg_t *msg) {
+  // Flag-gated per-packet diagnostic: whether each non-loopback lobby packet is
+  // admitted or which gate rejects it (LAN only; no payload logged).
+  auto lan_trace_printf =
+      [&](const char *format __attribute__((format(printf, 1, 2))), ...) {
+        if (!utils::flags::has_flag("lan-trace")) {
+          return;
+        }
+        va_list args;
+        va_start(args, format);
+        vprintf(format, args);
+        va_end(args);
+      };
+
+  // Dedicated closes real listeners and has no native lobby listen host.
   if (from_adr.type != game::net::NA_LOOPBACK && game::is_server() &&
       !game::server_running()) {
+    lan_trace_printf("[LAN TRACE] drop=%s from=%s:%hu reason=listen-host-not-running lobby=%d\n",
+                     from_adr.type == game::net::NA_LOOPBACK ? "loopback" : "ip",
+                     network::address_to_string(from_adr).c_str(), from_adr.port,
+                     static_cast<int>(lobby_type));
     return 0;
   }
 
@@ -228,12 +248,46 @@ uint64_t handle_packet_internal_stub(
     const bool valid_lobby_type =
         lobby_type == game::lobby::LobbyType::PRIVATE ||
         lobby_type == game::lobby::LobbyType::GAME;
+    const bool is_server = game::is_server();
+    const bool zombies_system_link = lan::is_zombies_system_link();
+    const bool same_subnet =
+        zombies_system_link ? lan::is_same_subnet(from_adr) : true;
+    const bool lan_authorized =
+        (!zombies_system_link || !same_subnet)
+            ? true
+            : party::is_lan_peer_authorized(from_adr);
+    const bool allow_packet = ezzsec::AllowLanPacket(msg);
+    // Keep the original single-condition structure for the actual drop: these
+    // sampled booleans are only for the trace reason.
+    const char *drop_reason = nullptr;
+    if (is_server) {
+      drop_reason = "is_server";
+    } else if (!valid_lobby_type) {
+      drop_reason = "lobby_type";
+    } else if (!zombies_system_link) {
+      drop_reason = "zombies_system_link";
+    } else if (!same_subnet) {
+      drop_reason = "same_subnet";
+    } else if (!lan_authorized) {
+      drop_reason = "lan_authorized";
+    } else if (!allow_packet) {
+      drop_reason = "allow_packet";
+    }
     if (game::is_server() || !valid_lobby_type ||
         !lan::is_zombies_system_link() || !lan::is_same_subnet(from_adr) ||
         !party::is_lan_peer_authorized(from_adr) ||
         !ezzsec::AllowLanPacket(msg)) {
+      lan_trace_printf("[LAN TRACE] drop=%s from=%s:%hu reason=%s lobby=%d\n",
+                       from_adr.type == game::net::NA_LOOPBACK ? "loopback" : "ip",
+                       network::address_to_string(from_adr).c_str(), from_adr.port,
+                       drop_reason ? drop_reason : "unknown",
+                       static_cast<int>(lobby_type));
       return 0;
     }
+
+    lan_trace_printf("[LAN TRACE] admit from=%s:%hu lobby=%d\n",
+                     network::address_to_string(from_adr).c_str(), from_adr.port,
+                     static_cast<int>(lobby_type));
 
     // Connectionless boiii traffic uses NA_RAWIP, while BO3's native lobby
     // state machine and NET_SendPacket expect their peer records as NA_IP.
@@ -241,10 +295,10 @@ uint64_t handle_packet_internal_stub(
   }
 
   return handle_packet_internal_hook.invoke<bool>(controller_index, from_adr,
-                                                  from_xuid, lobby_type,
-                                                  dest_module, msg)
-             ? 1
-             : 0;
+                                                   from_xuid, lobby_type,
+                                                   dest_module, msg)
+              ? 1
+              : 0;
 }
 
 int32_t bind_stub(SOCKET /*s*/, const sockaddr * /*addr*/,

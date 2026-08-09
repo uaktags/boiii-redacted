@@ -896,6 +896,19 @@ void print_message(const char *message) {
   }
 }
 
+std::string file_log_timestamp() {
+  using namespace std::chrono;
+  const auto now = system_clock::now();
+  const auto t = system_clock::to_time_t(now);
+  struct tm tm{};
+  localtime_s(&tm, &t);
+  const auto ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+  char buf[24];
+  snprintf(buf, sizeof(buf), "[%02d:%02d:%02d.%03d] ", tm.tm_hour, tm.tm_min,
+           tm.tm_sec, static_cast<int>(ms.count()));
+  return buf;
+}
+
 void queue_message(const char *message) {
   std::string msg(message);
 
@@ -921,7 +934,19 @@ void queue_message(const char *message) {
       log_file.open(log_dir / "boiii_console.log", std::ios::app);
     }
     if (log_file.is_open()) {
-      log_file << msg;
+      // Stamp each line as it begins so host/guest logs share a comparable
+      // wall clock. Com_Printf can deliver a logical line in several partial
+      // chunks, so track line boundaries across calls and only emit one stamp
+      // per line.
+      static bool at_line_start = true;
+      const std::string stamp = file_log_timestamp();
+      for (const char c : msg) {
+        if (at_line_start && c != '\n') {
+          log_file << stamp;
+        }
+        log_file.put(c);
+        at_line_start = (c == '\n');
+      }
       log_file.flush();
     }
   }
