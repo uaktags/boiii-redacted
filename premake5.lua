@@ -402,6 +402,7 @@ files({ "./src/common/**.hpp", "./src/common/**.cpp" })
 includedirs({
   "./deps/argparse/include",
   "./src/common",
+  "./deps/gtl/include",
   "./src",
   -- version.h and version.hpp headers
   "%{prj.location}/src",
@@ -431,6 +432,7 @@ includedirs({
   "./deps/argparse/include",
   "./deps/SteamworkSDK/public",
   "./src",
+  "./deps/gtl/include",
   "./deps/frozen/include",
   "./deps/Microsoft.Web.WebView2/build/native/include",
   "./src/client",

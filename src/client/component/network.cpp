@@ -36,9 +36,12 @@ bool is_lan_auth_command(const std::string_view command) {
          command == "lanauthproof" || command == "lanauthresponse";
 }
 
-std::unordered_map<std::string, callback> &get_callbacks() {
-  static std::unordered_map<std::string, callback> callbacks{};
-  return callbacks;
+static std::unordered_map<std::string, callback> callbacks{};
+
+// Convenience template overload: Allows passing values directly without manual
+// sizeof/pointers
+template <typename T> std::string to_hex(const T &value) {
+  return to_hex(&value, sizeof(T));
 }
 
 int64_t handle_command(const game::net::netadr_t *address, const char *command,
@@ -48,8 +51,15 @@ int64_t handle_command(const game::net::netadr_t *address, const char *command,
     return true;
   }
 
+#ifndef NDEBUG
+  game::net::netadr_str_t netadr_str_buf;
+  game::trace(
+      "[Network] handle_command called with address: \"%s\", command: \"%s\", "
+      "localClientNum: %s",
+      address->toString(netadr_str_buf), command, serialize(localClientNum));
+#endif
+
   const std::string cmd_string = utils::string::to_lower(command);
-  std::unordered_map<std::string, callback> &callbacks = get_callbacks();
   const auto callback_entry = callbacks.find(cmd_string);
   const size_t offset = cmd_string.size() + 5;
 
@@ -105,7 +115,11 @@ int64_t handle_command(const game::net::netadr_t *address, const char *command,
   try {
     callback_entry->second(*address, data, localClientNum);
   } catch (const std::exception &e) {
-    printf("Error: %s\n", e.what());
+    fprintf(stderr, "[Network] handle_command error: %s\n", e.what());
+    fflush(stderr);
+#ifndef NDEBUG
+    game::trace("[Network] handle_command error: %s\n", e.what());
+#endif
   } catch (...) {
   }
 
@@ -328,7 +342,7 @@ void com_error_oob_stub(const char *file, int32_t line, game::errorParm code,
 } // namespace
 
 void on(const std::string &command, const callback &callback) {
-  get_callbacks()[utils::string::to_lower(command)] = callback;
+  callbacks[utils::string::to_lower(command)] = callback;
 }
 
 void send(const game::net::netadr_t &address, const std::string &command,
@@ -534,8 +548,6 @@ struct component final : generic_component {
                         utils::hook::assemble(handle_command_stub));
 
       utils::hook::set<uint8_t>(0x14134D0FB_g, 0xEB);
-
-      utils::hook::call(0x14018E698_g, cl_dispatch_connectionless_packet_stub);
     }
 
     // TODO: Fix that

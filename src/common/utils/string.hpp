@@ -15,7 +15,7 @@ public:
   va_provider() : current_buffer_(0) {}
 
   char *get(const char *format, const va_list ap) {
-    ++this->current_buffer_ %= ARRAYSIZE(this->string_pool_);
+    ++this->current_buffer_ %= std::size(this->string_pool_);
     auto entry = &this->string_pool_[this->current_buffer_];
 
     if (!entry->size || !entry->buffer) {
@@ -107,5 +107,10 @@ std::string join(std::vector<std::string> strings,
 
 template <size_t Size> void copy(char (&dest)[Size], const char *src) {
   copy(dest, Size, src);
+}
+
+std::string hexdump(uintptr_t ptr, size_t size);
+template <typename T> inline std::string hexdump(const T *ptr, size_t size) {
+  return hexdump(reinterpret_cast<uintptr_t>(ptr), size);
 }
 } // namespace utils::string

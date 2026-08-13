@@ -178,6 +178,8 @@ struct component final : generic_component {
       if (network_password::is_password_set()) {
         info.set("net_password_required", "1");
         info.set("net_password_scheme", "1");
+        info.set("net_password_hash",
+                 network_password::get_password_hash_string());
       }
 
       network::send(target, "infoResponse", info.build(), '\n');

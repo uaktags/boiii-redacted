@@ -71,5 +71,4 @@ std::filesystem::path tracing_logfile() {
   return tracing;
 }
 #endif
-
 } // namespace game

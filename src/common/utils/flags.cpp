@@ -143,10 +143,6 @@ int32_t parse_flags(int argc, char *argv[]) {
       .help("Run in headless mode (no GUI)")
       .default_value(false)
       .implicit_value(true);
-  program.add_argument("-nopatch", "--nopatch")
-      .help("Disable selected runtime patches")
-      .default_value(false)
-      .implicit_value(true);
   program.add_argument("-plugins", "--plugins")
       .help("Load additional plugins from the `plugins/` directory")
       .default_value(false)
@@ -229,6 +225,15 @@ int32_t parse_flags(int argc, char *argv[]) {
       .default_value(std::string("assets"));
   program.add_argument("-nc", "-nocinematics", "--nocinematics")
       .help("Skip playing all cinematics.")
+      .implicit_value(true)
+      .default_value(false);
+  program.add_argument("-ls", "-log-script-errors", "--log-script-errors")
+      .help("Log all script errors, regardless of severity or `developer` dvar "
+            "value.")
+      .implicit_value(true)
+      .default_value(false);
+  program.add_argument("-ne", "-no-ext", "--no-ext")
+      .help("Disable load and usage of ext.dll.")
       .implicit_value(true)
       .default_value(false);
 #ifndef NDEBUG

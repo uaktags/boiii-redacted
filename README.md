@@ -198,7 +198,6 @@ Launch BOIII with these arguments for extra features:
 | `-update`             | Force enable updates (including host binary in debug builds).                                                                                                      |
 | `-norelaunch`         | Skip automatic relaunch after updates.                                                                                                                             |
 | `-headless`           | Run in headless mode (no GUI).                                                                                                                                     |
-| `-nopatch`            | Disable selected runtime patches.                                                                                                                                  |
 | `-noplugins`          | Disable plugin load.                                                                                                                                               |
 | `-plugins`            | Load additional plugins from the `plugins/` directory.                                                                                                             |
 | `-trimlogs`           | Trim or rotate old log files on startup.                                                                                                                           |
@@ -206,6 +205,7 @@ Launch BOIII with these arguments for extra features:
 | `-noconsole`          | Suppress the external launcher console window.                                                                                                                     |
 | `-nobranding`         | Disable EZZ watermark and console prefix.                                                                                                                          |
 | `-nocinematics`       | Disable playing all cinematics.                                                                                                                                    |
+| `-log-script-errors`  | Log all script errors, regardless of severity or `developer` dvar value.                                                                                           |
 | `-noratelimit`        | Disable rate limiting in dedicated server.                                                                                                                         |
 | `-quiet-crash`        | On crash, disable message box and minidump directory popups.                                                                                                       |
 | `-mitigatepacketspam` | In dedicated server, attempt to reduce unnecessary reliable command packets sent by some custom maps' scripts. Fixes Kowloon and Daybreak client load-in failures. |
