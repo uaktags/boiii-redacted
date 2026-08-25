@@ -428,12 +428,20 @@ link_capitalized_headers() {
 
 	for header_lower in "${!needs_capitalized[@]}"; do
 		header="${needs_capitalized["$header_lower"]}"
-		find_capitalized="$(find "${WINDOWS_MSVC_TOOLCHAIN_INCLUDE_PATH}" -name "${header}")"
+		find_capitalized="$(find "${WINDOWS_MSVC_TOOLCHAIN_INCLUDE_PATH}" -name "${header}" | sort | head -1)"
 		if [ -z "$find_capitalized" ]; then
-			find_case_insensitive="$(find "${WINDOWS_MSVC_TOOLCHAIN_INCLUDE_PATH}" -iname "$header_lower")"
+			# Prefer the shallowest match outside libc++ internal dirs (e.g.
+			# include/c++/v1/... ships its own case-variant windows.h helpers).
+			find_case_insensitive="$(
+				find "${WINDOWS_MSVC_TOOLCHAIN_INCLUDE_PATH}" -iname "$header_lower" |
+					grep -v '/c++/' | awk '{ print length(), $0 }' | sort -n | head -1 | cut -d' ' -f2-
+			)"
 			if [ -n "$find_case_insensitive" ]; then
 				find_dir="$(dirname "$find_case_insensitive")"
 				link_out="${find_dir}/${header}"
+				if [ "$find_case_insensitive" = "$link_out" ]; then
+					continue
+				fi
 				echo "Linking ${find_case_insensitive} -> ${link_out}"
 				if ! ln -s "$find_case_insensitive" "${link_out}"; then
 					echo "Error: Failed to link ${find_case_insensitive} to ${link_out}" >&2

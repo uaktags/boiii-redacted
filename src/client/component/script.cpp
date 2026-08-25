@@ -648,13 +648,24 @@ struct TreeDirectory {
   std::filesystem::path path;
   std::optional<std::string> strip_base;
   bool load_recursively;
+
+  bool operator==(const TreeDirectory &other) const {
+    return path == other.path && strip_base == other.strip_base &&
+           load_recursively == other.load_recursively;
+  }
+
+  struct hash {
+    size_t operator()(const TreeDirectory &dir) const {
+      return std::filesystem::hash_value(dir.path);
+    }
+  };
 };
 
 template <const size_t N>
-std::unordered_set<TreeDirectory>
+std::unordered_set<TreeDirectory, TreeDirectory::hash>
 shared_tree_directories(const array<const std::filesystem::path, N> &roots,
                         const std::filesystem::path &tree) {
-  std::unordered_set<TreeDirectory> root_entries;
+  std::unordered_set<TreeDirectory, TreeDirectory::hash> root_entries;
   for (const std::filesystem::path &root : roots) {
     for (const std::filesystem::path &entry :
          utils::io::list_files(root / tree, false, true)) {
@@ -685,7 +696,7 @@ void load_tree(std::filesystem::path tree, bool execImmediate = false) {
                            recurse, strip_base);
   };
 
-  std::unordered_set<TreeDirectory> applicable_tree_dirs =
+  std::unordered_set<TreeDirectory, TreeDirectory::hash> applicable_tree_dirs =
       shared_tree_directories<2>({data_directory, boiii_directory}, tree);
 
   const std::optional<std::filesystem::path> game_type =

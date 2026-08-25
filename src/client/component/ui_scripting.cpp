@@ -1003,7 +1003,7 @@ bool execute_lobby_lua(const std::string_view code, const char *chunk_name) {
 
   if (pcall.type() != HksObjectType::TFUNCTION &&
       pcall.type() != HksObjectType::TCFUNCTION) {
-    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+    game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER, game::consoleLabel_e::DEFAULT,
                           "^1LobbyVM pcall is unavailable\n");
     return false;
   }
@@ -1018,7 +1018,7 @@ bool execute_lobby_lua(const std::string_view code, const char *chunk_name) {
 
   if (result != 0) {
     state->m_apistack.top = stack_top;
-    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+    game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER, game::consoleLabel_e::DEFAULT,
                           "^1LobbyVM patch compile failed (%d)\n", result);
     return false;
   }
@@ -1031,7 +1031,7 @@ bool execute_lobby_lua(const std::string_view code, const char *chunk_name) {
   const bool success = stack_top->truthy();
   state->m_apistack.top = stack_top;
   if (!success) {
-    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+    game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER, game::consoleLabel_e::DEFAULT,
                           "^1LobbyVM patch execution failed\n");
   }
   return success;
