@@ -314,7 +314,7 @@ std::string get_client_patch_prompt_message(const client_binary_state /*state*/,
              "this BOIII build.\n\n"
              "This usually means Black Ops 3 was updated and BOIII needs "
              "the older compatible BlackOps3.exe version.\n\n"
-             "BOIII can download and install that compatible version "
+             "BOIII can download and install the compatible BlackOps3.exe "
              "automatically before launch.") +
          close_message + "\n\nPress OK to continue or Cancel to stop.";
 }
@@ -906,6 +906,10 @@ function doSelect() {
   return path_set;
 }
 } // namespace
+inline bool initial_update_required() {
+  return !utils::io::file_exists(
+      launcher::get_launcher_ui_file().generic_wstring());
+}
 
 int main(int argc, char *argv[]) {
   if (handle_process_runner()) {
@@ -957,13 +961,18 @@ int main(int argc, char *argv[]) {
           utils::flags::has_flag("dedicated") || (!has_client && has_server);
 
       if (!is_server && !launcher::is_game_process_running()) {
-        updater::update();
+        updater::update(initial_update_required());
       }
 
-      if (!utils::io::file_exists(
-              launcher::get_launcher_ui_file().generic_wstring())) {
-        throw std::runtime_error("BOIII needs an active internet connection "
-                                 "for the first time you launch it.");
+      if (initial_update_required()) {
+        const std::filesystem::path appdata_path = game::get_appdata_path();
+        const std::string appdata_path_str = appdata_path.generic_string();
+        const char *err = utils::string::va(
+            "Missing required data in %s; Initial data download has failed. "
+            "BOIII needs an active internet connection "
+            "for the first time you launch it.",
+            appdata_path_str.c_str());
+        throw std::runtime_error(err);
       }
 
       if (!is_server) {

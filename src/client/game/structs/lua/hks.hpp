@@ -6,8 +6,6 @@
 #include <game/ptr.hpp>
 
 namespace game {
-
-namespace ui {
 namespace lua {
 
 struct LuaStateContext;
@@ -229,12 +227,15 @@ struct UpValue;
 
 typedef double HksDouble;
 typedef qboolean hksBool;
+inline constexpr hksBool htrue = qtrue;
+inline constexpr hksBool hfalse = qfalse;
 typedef char hksChar;
 typedef uint8_t hksByte;
 typedef int16_t hksShort16;
 typedef uint16_t hksUshort16;
 typedef float HksNumber;
 typedef int32_t hksInt32;
+typedef hksInt32 HksInteger;
 typedef uint32_t hksUint32;
 typedef hksUint32 hksUint;
 typedef hksUint32 HksNativeValueAsInt;
@@ -248,7 +249,7 @@ typedef void *hks_fixedheap;
 typedef fastcallPtr_t<void *(void *userData, void *ptr, size_t osize,
                              size_t nsize)>
     lua_Alloc;
-typedef fastcall_t<hksInt32(lua_State *s)> lua_CFunction;
+typedef fastcall_t<luaReturnCount_e(lua_State *s)> lua_CFunction;
 typedef fastcallPtr_t<char *(lua_State *s, void *data, size_t *size)>
     lua_Reader;
 typedef fastcallPtr_t<void(lua_State *s, const char *fmt, ...)> HksLogFunc;
@@ -261,6 +262,9 @@ typedef fastcallPtr_t<int32_t(const char *filename, int32_t lua_line)>
 typedef fastcallPtr_t<void(lua_State *s, int64_t nargs, int32_t nresults,
                            const hksInstruction *pc)>
     Hkslua_Caller;
+typedef fastcall_t<void(lua_State *luaVM, void *arg, int numResults,
+                        const hksInstruction *)>
+    lua_caller;
 
 typedef hksInt32 lua_Integer;
 typedef HksDouble LightUserData;
@@ -578,11 +582,9 @@ struct lua_Debug {
   hksInt32 is_tail_call;
 };
 
-using lua_function = fastcallPtr_t<hksInt32(lua_State *s)>;
-
 struct luaL_Reg {
   const char *name;
-  lua_function function;
+  lua_CFunction *function;
 };
 
 struct StringPinner {
@@ -718,7 +720,7 @@ static_assert(std::is_trivially_copy_constructible_v<HashTable>,
 #pragma pack(pop)
 
 struct cclosure : ChunkHeader {
-  lua_function m_function;
+  lua_CFunction *m_function;
   HashTable *m_env;
   hksShort16 m_numUpvalues;
   hksShort16 m_flags;
@@ -1331,5 +1333,4 @@ struct OpcodeAdd {
 };
 } // namespace hks
 } // namespace lua
-} // namespace ui
 } // namespace game

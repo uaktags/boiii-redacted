@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 #include "../core.hpp"
 #include "../weapon.hpp"
@@ -19,15 +20,27 @@ struct HunkUser;
 namespace scr {
 typedef str<272> scr_path_t;
 
-template <typename T> union ScrPool {
-  array<T, SCRIPTINSTANCE_MAX> instance;
+#include <cstdint>
+#include <cassert>
+#include <array>
+#include <type_traits>
+
+// Primary template declaration
+template <typename T,
+          template <typename Element, size_t N> typename T_Array = array,
+          bool TrivialConstruct = std::is_trivially_constructible_v<T>>
+union ScrPool;
+
+// Specialization for trivially constructible types that comply with CPP03 PoD
+// constraints
+template <typename T, template <typename Element, size_t N> typename T_Array>
+union ScrPool<T, T_Array, true> {
+  T_Array<T, SCRIPTINSTANCE_MAX> instance;
   struct {
     T server;
     T client;
   };
 
-  // Minimum, optimized primitive for indexing the pool that can contain all
-  // values 0 <= index < BGCachecTypes::COUNT
   using index_t = uint8_t;
 
   inline constexpr void assert_range(size_t index) const {
@@ -42,6 +55,7 @@ template <typename T> union ScrPool {
     assert_range(index);
     return instance[index];
   }
+
   template <IntegralLike Index>
   inline constexpr const T &operator[](Index index) const {
     return get(index);
@@ -52,12 +66,71 @@ template <typename T> union ScrPool {
     assert_range(index);
     return instance[index];
   }
+
   template <IntegralLike Index> inline constexpr T &operator[](Index index) {
     return get(index);
   }
 
   inline constexpr auto size() const noexcept { return std::size(instance); }
 };
+
+//  Specialization for non-trivially constructible types
+template <typename T, template <typename Element, size_t N> typename T_Array>
+union ScrPool<T, T_Array, false> {
+  T_Array<T, SCRIPTINSTANCE_MAX> instance;
+  struct {
+    T server;
+    T client;
+  };
+
+  using index_t = uint8_t;
+
+  inline constexpr void assert_range(size_t index) const {
+    assert(index < std::size(instance) &&
+           "index to ScrPool must be within range SCRIPTINSTANCE_SERVER <= "
+           "index < SCRIPTINSTANCE_MAX");
+  }
+
+  template <IntegralLike Index>
+  inline constexpr const T &get(Index index_arg) const {
+    const index_t index = static_cast<index_t>(index_arg);
+    assert_range(index);
+    return instance[index];
+  }
+
+  template <IntegralLike Index>
+  inline constexpr const T &operator[](Index index) const {
+    return get(index);
+  }
+
+  template <IntegralLike Index> inline constexpr T &get(Index index_arg) {
+    const index_t index = static_cast<index_t>(index_arg);
+    assert_range(index);
+    return instance[index];
+  }
+
+  template <IntegralLike Index> inline constexpr T &operator[](Index index) {
+    return get(index);
+  }
+
+  inline constexpr auto size() const noexcept { return std::size(instance); }
+
+  // Constructors and Destructors permitted here - `T` already makes this
+  // non-conformant to CPP03 PoD.
+  inline ScrPool() : server(T()), client(T()) {}
+
+  ~ScrPool()
+    requires(!std::is_trivially_destructible_v<T>)
+  {
+    server.~T();
+    client.~T();
+  }
+
+  ~ScrPool()
+    requires(std::is_trivially_destructible_v<T>)
+  = default;
+};
+ASSERT_CPP03_POD(ScrPool<uint64_t>);
 
 enum class scriptBundleKVPType_t : int32_t {
   KVP_STRING = 0x0,
@@ -112,7 +185,7 @@ ASSERT_SIZE(KVPItemUnion, 8);
 
 union ScriptBundleKVPData {
   uint32_t _data;
-  int integer;
+  int32_t integer;
   float v;
 };
 ASSERT_SIZE(ScriptBundleKVPData, 4);
@@ -1437,7 +1510,7 @@ typedef ScriptBundle *ScriptBundlePtr;
 
 union EntRefUnion {
   int32_t entnum;
-  uint32_t hudElemIndex;
+  uint16_t hudElemIndex;
   uint32_t pathNodeIndex;
   int16_t vehicleNodeIndex;
   uint16_t absDynEntIndex;
@@ -1480,98 +1553,6 @@ struct scr_animtree_t {
   XAnim *anims;
 };
 
-typedef fastcallPtr_t<void(LocalClientNum_t, uint32_t, float, float, bool, bool,
-                           ScrString_t, bool, bool)>
-    ClientFieldCodeCallbackFuncFloatVal;
-typedef fastcallPtr_t<void(LocalClientNum_t, uint32_t, uint32_t, uint32_t, bool,
-                           bool, ScrString_t, bool, bool)>
-    ClientFieldCodeCallbackFuncUintVal;
-
-struct clientFieldCodeCallback_t {
-  struct {
-    uint64_t bHasCodeCallback : 1;
-    uint64_t bCodeCallbackIsFloatVal : 1;
-  };
-  union {
-    ClientFieldCodeCallbackFuncFloatVal floatCallbackFunc;
-    ClientFieldCodeCallbackFuncUintVal uintCallbackFunc;
-  };
-};
-
-struct clientFieldUnionClient_t {
-  uint8_t bSplitscreenHostOnly;
-  uint8_t bCallbacksFor0WhenNew;
-};
-
-struct clientFieldUnionServer_t {
-  uint8_t gap0;
-};
-
-union clientFieldUnion_t {
-  clientFieldUnionClient_t client;
-  clientFieldUnionServer_t server;
-};
-
-typedef intptr_t scr_funcptr_t;
-struct scr_func_t {
-  char funcinfo[260];
-  scr_funcptr_t func;
-};
-
-struct __attribute__((aligned(8))) clientField_t {
-  scr::scr_func_t scriptCallbackFunc;
-  clientFieldCodeCallback_t codeCallbackFunc;
-  scr::ScrString_t nameHash;
-  uint32_t fieldOffset;
-  uint32_t accessMask;
-  uint8_t bitOffset;
-  uint8_t fieldType;
-  uint8_t obsolete;
-  uint8_t clientFieldSet;
-  uint32_t numBits;
-  uint32_t version;
-  clientFieldUnion_t u;
-};
-
-struct bgs_clientfieldapi_t {
-  void (*CompareHashToGameState)(uint32_t);
-  bool (*AllowVersionReRegistration)(void);
-  bool (*FieldVersionAllowsRegistration)(clientField_t *, uint32_t);
-  bool (*ServerVersionAllowsRegistration)(uint32_t);
-};
-
-struct clientFieldCallback_t {
-  clientField_t *pField;
-  union {
-    float oldFloat;
-    uint32_t oldInt;
-  };
-  union {
-    float newFloat;
-    uint32_t newInt;
-  };
-  uint32_t localClientNum;
-  uint32_t entNum;
-  struct {
-    uint64_t bInitialSnap : 1;
-    uint64_t bNewEnt : 1;
-    uint64_t bWasDemoJump : 1;
-    uint64_t bWasKillcamTransition : 1;
-  };
-};
-
-struct clientNetField_t {
-  int bitsUsed;
-  int netFieldOffset;
-};
-
-struct clientFieldSet_t {
-  int numFields;
-  clientField_t *pFields[2048];
-  int numNetFields;
-  clientNetField_t *pNetFields;
-};
-
 struct XCamFrame {
   int32_t frameNum;
   vec3_t origin;
@@ -1612,6 +1593,12 @@ public:
   int32_t xcamLerpEndTime;
   XCamFrame lerpFrame;
   XCamTargetModelFrame lerpModelFrame;
+};
+
+typedef intptr_t scr_funcptr_t;
+struct scr_func_t {
+  char funcinfo[260];
+  scr_funcptr_t func;
 };
 
 struct ScriptCamera {
@@ -1687,6 +1674,77 @@ struct Camera {
   vec3_t lastTagCameraAngles;
 };
 
+struct GSC_PROFILE_ITEM {
+  uintptr_t name;
+  uintptr_t address;
+};
+
+struct GSC_GLOBALVAR_ITEM {
+  uint32_t name;
+  uint32_t num_address;
+};
+
+struct GSC_ANIMNODE_ITEM {
+  uintptr_t name;
+  uintptr_t address;
+};
+
+struct GSC_FIXUP_ITEM {
+  uintptr_t offset;
+  uintptr_t address;
+};
+
+struct GSC_STRINGTABLE_ITEM {
+  uint32_t string;
+  uint8_t num_address;
+  uint8_t type;
+  uint8_t pad[2];
+};
+
+PACKED(struct GSC_EXPORT_ITEM {
+  // crc32
+  uint32_t checksum;
+  // Bytecode offset
+  uint32_t address;
+
+  // Function name hash
+  ScrVarCanonicalName_t name;
+  // Namespace hash
+  ScrVarCanonicalName_t name_space;
+  uint8_t param_count;
+  uint8_t flags;
+  uint8_t _padding12[2];
+});
+ASSERT_SIZE(GSC_EXPORT_ITEM, 0x14);
+
+struct GSC_IMPORT_ITEM {
+  ScrVarCanonicalName_t name;
+  ScrVarCanonicalName_t name_space;
+  uint16_t num_address;
+  uint8_t param_count;
+  uint8_t flags;
+
+  inline std::span<const uint32_t> addresses() const {
+    return std::span(
+        reinterpret_cast<const uint32_t *>(reinterpret_cast<uintptr_t>(this) +
+                                           sizeof(GSC_IMPORT_ITEM)),
+        num_address);
+  }
+
+  inline std::span<uint32_t> addresses() {
+    return std::span(
+        reinterpret_cast<uint32_t *>(reinterpret_cast<uintptr_t>(this) +
+                                     sizeof(GSC_IMPORT_ITEM)),
+        num_address);
+  }
+};
+
+struct GSC_ANIMTREE_ITEM {
+  uint32_t name;
+  uint16_t num_tree_address;
+  uint16_t num_node_address;
+};
+
 PACKED(struct GSC_OBJ {
   str8_t magic;
   uint32_t source_crc;
@@ -1738,6 +1796,19 @@ PACKED(struct GSC_OBJ {
     magic[7] = val[7];
   }
 
+  inline constexpr bool hasMagic(const std::array<char, sizeof(uint64_t)> &val)
+      const noexcept {
+    return magic[0] == val[0] && magic[1] == val[1] && magic[2] == val[2] &&
+           magic[3] == val[3] && magic[4] == val[4] && magic[5] == val[5] &&
+           magic[6] == val[6] && magic[7] == val[7];
+  }
+
+  inline constexpr bool hasMagic(const str8_t &val) const noexcept {
+    return magic[0] == val[0] && magic[1] == val[1] && magic[2] == val[2] &&
+           magic[3] == val[3] && magic[4] == val[4] && magic[5] == val[5] &&
+           magic[6] == val[6] && magic[7] == val[7];
+  }
+
   inline const char *get_name() const noexcept {
     return reinterpret_cast<const char *>(this) + name;
   }
@@ -1746,12 +1817,74 @@ PACKED(struct GSC_OBJ {
     return reinterpret_cast<char *>(this) + name;
   }
 
-  inline const uint8_t *cseg() const noexcept {
-    return reinterpret_cast<const uint8_t *>(this) + cseg_offset;
+  inline std::span<const uint8_t> cseg() const noexcept {
+    return std::span(reinterpret_cast<const uint8_t *>(this) + cseg_offset,
+                     cseg_size);
   }
 
-  inline uint8_t *cseg() noexcept {
-    return reinterpret_cast<uint8_t *>(this) + cseg_offset;
+  inline std::span<uint8_t> cseg() noexcept {
+    return std::span(reinterpret_cast<uint8_t *>(this) + cseg_offset,
+                     cseg_size);
+  }
+
+  inline std::span<const GSC_EXPORT_ITEM> exports() const noexcept {
+    return std::span(reinterpret_cast<const GSC_EXPORT_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + exports_offset),
+                     exports_count);
+  }
+
+  inline std::span<GSC_EXPORT_ITEM> exports() noexcept {
+    return std::span(reinterpret_cast<GSC_EXPORT_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + exports_offset),
+                     exports_count);
+  }
+
+  inline std::span<const ScrVarCanonicalName_t> includes() const noexcept {
+    return std::span(reinterpret_cast<const ScrVarCanonicalName_t *>(
+                         reinterpret_cast<uintptr_t>(this) + include_offset),
+                     include_count);
+  }
+
+  inline std::span<ScrVarCanonicalName_t> includes() noexcept {
+    return std::span(reinterpret_cast<ScrVarCanonicalName_t *>(
+                         reinterpret_cast<uintptr_t>(this) + include_offset),
+                     include_count);
+  }
+
+  inline std::span<const GSC_IMPORT_ITEM> imports() const noexcept {
+    return std::span(reinterpret_cast<const GSC_IMPORT_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + imports_offset),
+                     imports_count);
+  }
+
+  inline std::span<GSC_IMPORT_ITEM> imports() noexcept {
+    return std::span(reinterpret_cast<GSC_IMPORT_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + imports_offset),
+                     imports_count);
+  }
+
+  inline std::span<const GSC_FIXUP_ITEM> fixups() const noexcept {
+    return std::span(reinterpret_cast<const GSC_FIXUP_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + fixup_offset),
+                     fixup_count);
+  }
+
+  inline std::span<GSC_FIXUP_ITEM> fixups() noexcept {
+    return std::span(reinterpret_cast<GSC_FIXUP_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + fixup_offset),
+                     fixup_count);
+  }
+
+  inline std::span<const GSC_ANIMTREE_ITEM> animtrees() const noexcept {
+    return std::span(reinterpret_cast<const GSC_ANIMTREE_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + animtree_offset),
+                     animtree_count);
+  }
+
+  inline std::span<GSC_ANIMTREE_ITEM> animtrees() noexcept {
+    return std::span(reinterpret_cast<GSC_ANIMTREE_ITEM *>(
+                         reinterpret_cast<uintptr_t>(this) + animtree_offset),
+                     animtree_count);
   }
 
   static inline constexpr uint8_t T7_LATEST_VERSION = 0x1C;
@@ -1774,12 +1907,6 @@ PACKED(struct GSC_OBJ {
 });
 ASSERT_OFFSET(GSC_OBJ, cseg_size, 0x30);
 ASSERT_SIZE(GSC_OBJ, 0x48);
-
-struct GSC_ANIMTREE_ITEM {
-  uint32_t name;
-  uint16_t num_tree_address;
-  uint16_t num_node_address;
-};
 
 #pragma pack(push, 1)
 struct ScriptParseTree {
@@ -1958,5 +2085,6 @@ ASSERT_SIZE(objFileInfo_t, 0x50);
 
 typedef ScrPool<array<objFileInfo_t, 500>> ObjFileInfoPool;
 ASSERT_SIZE(ObjFileInfoPool, 0x13880);
+
 } // namespace scr
 } // namespace game

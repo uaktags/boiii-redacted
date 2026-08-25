@@ -25,8 +25,6 @@ struct server {
 auto *const internet_request = reinterpret_cast<void *>(1);
 auto *const lan_request = reinterpret_cast<void *>(2);
 auto *const favorites_request = reinterpret_cast<void *>(4);
-auto *const history_request = reinterpret_cast<void *>(5);
-auto *const friends_request = reinterpret_cast<void *>(3);
 
 using servers = std::vector<server>;
 

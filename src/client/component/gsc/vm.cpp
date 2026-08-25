@@ -1,6 +1,6 @@
 #include <std_include.hpp>
 #include "vm.hpp"
-#include "game/impl/scr/vm/op.hpp"
+#include <game/impl/scr/vm/op.hpp>
 #include "gsc_funcs.hpp"
 #include "loader/component_loader.hpp"
 #include <utils/string.hpp>
@@ -37,16 +37,20 @@ inline void flush_stack(scriptInstance_t inst,
   _mm_clflush(const_cast<const bool *>(terminate));
   _mm_mfence();
 
-  _mm_clflush(&game::scr::vm::gScrVmPub->instance[inst]);
+  _mm_clflush(const_cast<const scrVmPub_t *>(
+      &game::scr::vm::gScrVmPub->instance[inst]));
   _mm_mfence();
 
-  _mm_clflush(&game::scr::vm::gScrVarGlob->instance[inst]);
+  _mm_clflush(const_cast<const scrVarGlob_t *>(
+      &game::scr::vm::gScrVarGlob->instance[inst]));
   _mm_mfence();
 
-  _mm_clflush(game::scr::vm::gScrVarGlob->instance[inst].scriptVariables);
+  _mm_clflush(const_cast<const ScrVar_t *>(
+      game::scr::vm::gScrVarGlob->instance[inst].scriptVariables));
   _mm_mfence();
 
-  _mm_clflush(&game::scr::vm::gFs->instance[inst]);
+  _mm_clflush(const_cast<const function_stack_t *>(
+      &game::scr::vm::gFs->instance[inst]));
   _mm_mfence();
 }
 
@@ -84,6 +88,7 @@ flush_exec(scriptInstance_t inst, volatile vm::function_stack_t *fs,
     flush_stack(inst, fs, vmc, terminate);
   }
   invoke_opcode<Op>(inst, fs, vmc, terminate);
+  flush_stack(inst, fs, vmc, terminate);
 }
 
 template <const game::scr::vm::op::Opcode Op>
@@ -93,13 +98,15 @@ flush_exec_err(scriptInstance_t inst, volatile vm::function_stack_t *fs,
 
   flush_stack(inst, fs, vmc, terminate);
   invoke_opcode_err<Op>(inst, fs, vmc, terminate);
+  flush_stack(inst, fs, vmc, terminate);
 }
 
 inline bool try_redirect(scriptInstance_t inst,
                          volatile vm::function_stack_t *fs) {
   if (gsc::detours_enabled.load(std::memory_order_acquire) &&
       inst == SCRIPTINSTANCE_SERVER) {
-    // Step back one operation in bytecode
+    // Step behind the opcode in bytecode. Bytecode position increments past the
+    // opcode just prior to execution in `VM_Execute`.
     uint8_t *redirected = fs->pos - sizeof(op::OP_TYPE);
     if (gsc::function_replacements.contains(redirected)) {
       fs->pos = gsc::function_replacements[redirected];
@@ -120,7 +127,6 @@ redirect_or_default(scriptInstance_t inst, volatile vm::function_stack_t *fs,
     flush_stack(inst, fs, vmc, terminate);
   }
   if (!try_redirect(inst, fs)) {
-    flush_stack(inst, fs, vmc, terminate);
     invoke_opcode<Op>(inst, fs, vmc, terminate);
   }
 }
@@ -224,132 +230,18 @@ void hook_opcode_err(vm::op::Opcode opcode, const vm::op::VM_OP_FUNC_PTR hook,
 #endif
 
 inline void flush_exec_all() {
-  HOOK_FLUSH_EXEC(Bit_And);
-  HOOK_FLUSH_EXEC(Bit_Or);
-  HOOK_FLUSH_EXEC(Bit_Xor);
-  HOOK_FLUSH_EXEC(BoolComplement);
-  HOOK_FLUSH_EXEC(BoolNot);
-  HOOK_FLUSH_EXEC(CallBuiltin);
-  HOOK_FLUSH_EXEC(CallBuiltinMethod);
-  HOOK_FLUSH_EXEC(CastBool);
-  HOOK_FLUSH_EXEC(CastFieldObject);
-  HOOK_FLUSH_EXEC(ClearArray);
-  HOOK_FLUSH_EXEC(ClearFieldVariable);
-  HOOK_FLUSH_EXEC(ClearParams);
-  HOOK_FLUSH_EXEC(Dec);
-  HOOK_FLUSH_EXEC(DecTop);
-  HOOK_FLUSH_EXEC(DevblockBegin);
-  HOOK_FLUSH_EXEC(Divide);
-  HOOK_FLUSH_EXEC(End);
-  HOOK_FLUSH_EXEC(EndOn);
-  HOOK_FLUSH_EXEC(EndSwitch);
-  HOOK_FLUSH_EXEC(Equal);
-  HOOK_FLUSH_EXEC(EvalArray);
-  HOOK_FLUSH_EXEC(EvalArrayRef);
-  HOOK_FLUSH_EXEC(EvalFieldVariable);
-  HOOK_FLUSH_EXEC(EvalFieldVariableRef);
-  HOOK_FLUSH_EXEC(EvalLevelFieldVariable);
-  HOOK_FLUSH_EXEC(EvalLevelFieldVariableRef);
-  HOOK_FLUSH_EXEC(EvalLocalVariableCached);
-  HOOK_FLUSH_EXEC(EvalLocalVariableCachedDebug);
-  HOOK_FLUSH_EXEC(EvalLocalVariableRefCached);
-  HOOK_FLUSH_EXEC(EvalLocalVariableRefCachedDebug);
-  HOOK_FLUSH_EXEC(EvalSelfFieldVariable);
-  HOOK_FLUSH_EXEC(EvalSelfFieldVariableRef);
-  HOOK_FLUSH_EXEC(FirstArrayKey);
-  HOOK_FLUSH_EXEC(GetAnim);
-  HOOK_FLUSH_EXEC(GetAnimation);
-  HOOK_FLUSH_EXEC(GetAnimObject);
-  HOOK_FLUSH_EXEC(GetAPIFunction);
-  HOOK_FLUSH_EXEC(GetByte);
-  HOOK_FLUSH_EXEC(GetClasses);
-  HOOK_FLUSH_EXEC(GetClassesObject);
-  HOOK_FLUSH_EXEC(GetEmptyArray);
-  HOOK_FLUSH_EXEC(GetFloat);
-  HOOK_FLUSH_EXEC(GetFunction);
-  HOOK_FLUSH_EXEC(GetGame);
-  HOOK_FLUSH_EXEC(GetGameRef);
-  HOOK_FLUSH_EXEC(GetHash);
-  HOOK_FLUSH_EXEC(GetInteger);
-  HOOK_FLUSH_EXEC(GetIString);
-  HOOK_FLUSH_EXEC(GetLevel);
-  HOOK_FLUSH_EXEC(GetLevelObject);
-  HOOK_FLUSH_EXEC(GetNegByte);
-  HOOK_FLUSH_EXEC(GetNegUnsignedShort);
-  HOOK_FLUSH_EXEC(GetSelf);
-  HOOK_FLUSH_EXEC(GetSelfObject);
-  HOOK_FLUSH_EXEC(GetString);
-
-  HOOK_FLUSH_EXEC(GetTime);
   // Uses TAC encryption when accessing the `cgArray` in client. Hangs forever
   // if original implementation is called from outside the BO3 engine address
   // space.
+  HOOK_FLUSH_EXEC(GetTime);
   HOOKED_OPCODE_HANDLERS[+op::Opcode::GetTime] =
       &op::VM_OP_GetTime_Handler_Impl;
-
-  HOOK_FLUSH_EXEC(GetUintptr);
-  HOOK_FLUSH_EXEC(GetUndefined);
-  HOOK_FLUSH_EXEC(GetUnsignedShort);
-  HOOK_FLUSH_EXEC(GetVector);
-  HOOK_FLUSH_EXEC(GetWorld);
-  HOOK_FLUSH_EXEC(GetWorldObject);
-  HOOK_FLUSH_EXEC(GetZero);
-  HOOK_FLUSH_EXEC(GreaterThan);
-  HOOK_FLUSH_EXEC(GreaterThanOrEqualTo);
-  HOOK_FLUSH_EXEC(Inc);
-  HOOK_FLUSH_EXEC(IsDefined);
-  HOOK_FLUSH_EXEC(Jump);
-  HOOK_FLUSH_EXEC(JumpOnFalse);
-  HOOK_FLUSH_EXEC(JumpOnFalseExpr);
-  HOOK_FLUSH_EXEC(JumpOnTrue);
-  HOOK_FLUSH_EXEC(JumpOnTrueExpr);
-  HOOK_FLUSH_EXEC(LessThan);
-  HOOK_FLUSH_EXEC(LessThanOrEqualTo);
-  HOOK_FLUSH_EXEC(Minus);
-  HOOK_FLUSH_EXEC(Modulus);
-  HOOK_FLUSH_EXEC(Multiply);
-  HOOK_FLUSH_EXEC(New);
-  HOOK_FLUSH_EXEC(NextArrayKey);
-  HOOK_FLUSH_EXEC(NotEqual);
-  HOOK_FLUSH_EXEC(Notify);
-  HOOK_FLUSH_EXEC(Plus);
-  HOOK_FLUSH_EXEC(PreScriptCall);
-  HOOK_FLUSH_EXEC(ProfileStart);
-  HOOK_FLUSH_EXEC(ProfileStop);
-  HOOK_FLUSH_EXEC(Return);
-  HOOK_FLUSH_EXEC(SafeDecTop);
-  HOOK_FLUSH_EXEC(SafeSetVariableFieldCached);
-  HOOK_FLUSH_EXEC(SafeSetWaittillVariableFieldCached);
-  HOOK_FLUSH_EXEC(ScriptFunctionCall);
-  HOOK_FLUSH_EXEC(ScriptFunctionCallClass);
-  HOOK_FLUSH_EXEC(ScriptFunctionCallPointer);
-  HOOK_FLUSH_EXEC(ScriptMethodCall);
-  HOOK_FLUSH_EXEC(ScriptMethodCallPointer);
-  HOOK_FLUSH_EXEC(ScriptMethodThreadCall);
-  HOOK_FLUSH_EXEC(ScriptMethodThreadCallPointer);
-  HOOK_FLUSH_EXEC(ScriptThreadCall);
-  HOOK_FLUSH_EXEC(ScriptThreadCallClass);
-  HOOK_FLUSH_EXEC(ScriptThreadCallPointer);
-  HOOK_FLUSH_EXEC(SetVariableField);
-  HOOK_FLUSH_EXEC(ShiftLeft);
-  HOOK_FLUSH_EXEC(ShiftRight);
-  HOOK_FLUSH_EXEC(SizeOf);
-  HOOK_FLUSH_EXEC(SuperEqual);
-  HOOK_FLUSH_EXEC(SuperNotEqual);
-  HOOK_FLUSH_EXEC(Switch);
-  HOOK_FLUSH_EXEC(Vector);
-  HOOK_FLUSH_EXEC(VectorConstant);
-  HOOK_FLUSH_EXEC(VectorScale);
-  HOOK_FLUSH_EXEC(Wait);
-  HOOK_FLUSH_EXEC(WaitRealTime);
-  HOOK_FLUSH_EXEC(WaitTill);
-  HOOK_FLUSH_EXEC(WaitTillFrameEnd);
-  HOOK_FLUSH_EXEC(WaitTillMatch);
 
   // For `replacefunc` redirects
   HOOK_OP(SafeCreateLocalVariables, redirect_or_default);
   HOOK_OP(CheckClearParams, redirect_or_default);
 
+#ifndef NDEBUG
   // Error handlers
   HOOK_ERR_FLUSH_EXEC(Bit_And);
   HOOK_ERR_FLUSH_EXEC(Bit_Or);
@@ -467,6 +359,7 @@ inline void flush_exec_all() {
   HOOK_ERR_FLUSH_EXEC(WaitTillMatch);
   HOOK_ERR_FLUSH_EXEC(SafeCreateLocalVariables);
   HOOK_ERR_FLUSH_EXEC(CheckClearParams);
+#endif
 }
 
 struct component final : generic_component {

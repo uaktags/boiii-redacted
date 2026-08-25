@@ -97,6 +97,9 @@
               class="gear-btn"
               id="gearBtn"
               title="Launch Options"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="launchDropdown"
             >
               <span class="gear-btn-icon">&#9655;</span>
               <span class="gear-btn-label">Launch Options</span>
@@ -106,11 +109,85 @@
               <div class="launch-dropdown-list">
                 <div
                   class="launch-option-card"
+                  data-option="noconsole"
+                  data-option-legacy="nologs"
+                  title="Hide the external console window without disabling logs"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">No Console</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="keep-launcher"
+                  data-option-legacy="keeplauncher"
+                  title="Keep the launcher open after starting the game"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Keep Launcher</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="cheats"
+                  title="Enable cheat dvars and commands; other players can use them in a hosted private match"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Enable Cheats</span>
+                </div>
+                <div
+                  class="launch-option-card"
                   data-option="nointro"
                   title="Skip the intro cinematic on startup"
                 >
                   <span class="launch-option-dot"></span
                   ><span class="launch-option-name">Skip Intro</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="borderless"
+                  title="Run in borderless fullscreen mode"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Borderless</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="windowed"
+                  title="Run the game in a windowed window"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Windowed</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="ultrawide"
+                  title="Enable ultrawide UI scaling; some interfaces may not align correctly"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Ultrawide UI</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="nocinematics"
+                  title="Skip every cinematic, including in-game cutscenes"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Skip Cinematics</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="fulllogs"
+                  title="Show full untruncated log output (logs are trimmed by default)"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Full Logs</span>
+                </div>
+                <div
+                  class="launch-option-card"
+                  data-option="console"
+                  title="Enable the developer console in-game"
+                >
+                  <span class="launch-option-dot"></span
+                  ><span class="launch-option-name">Dev Console</span>
                 </div>
                 <div
                   class="launch-option-card"
@@ -130,19 +207,11 @@
                 </div>
                 <div
                   class="launch-option-card"
-                  data-option="windowed"
-                  title="Run the game in a windowed window"
+                  data-option="noplugins"
+                  title="Disable loading of custom plugins (plugins are enabled by default)"
                 >
                   <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">Windowed</span>
-                </div>
-                <div
-                  class="launch-option-card"
-                  data-option="borderless"
-                  title="Run in borderless fullscreen mode"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">Borderless</span>
+                  ><span class="launch-option-name">No Plugins</span>
                 </div>
                 <div
                   class="launch-option-card"
@@ -154,51 +223,11 @@
                 </div>
                 <div
                   class="launch-option-card"
-                  data-option="console"
-                  title="Enable the developer console in-game"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">Dev Console</span>
-                </div>
-                <div
-                  class="launch-option-card"
                   data-option="headless"
                   title="Run the server without a visible window"
                 >
                   <span class="launch-option-dot"></span
                   ><span class="launch-option-name">Headless</span>
-                </div>
-                <div
-                  class="launch-option-card"
-                  data-option="fulllogs"
-                  title="Show full untruncated log output (logs are trimmed by default)"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">Full Logs</span>
-                </div>
-                <div
-                  class="launch-option-card"
-                  data-option="nologs"
-                  title="Disable the external console window"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">No Console</span>
-                </div>
-                <div
-                  class="launch-option-card"
-                  data-option="keeplauncher"
-                  title="Keep the launcher open after starting the game"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">Keep Launcher</span>
-                </div>
-                <div
-                  class="launch-option-card"
-                  data-option="noplugins"
-                  title="Disable loading of custom plugins (plugins are enabled by default)"
-                >
-                  <span class="launch-option-dot"></span
-                  ><span class="launch-option-name">No Plugins</span>
                 </div>
               </div>
             </div>
@@ -493,8 +522,30 @@
             </div>
 
             <div class="library-toolbar">
-              <span class="library-toolbar-title">Installed Items</span>
+              <div class="library-toolbar-heading">
+                <span class="library-toolbar-title">Installed Items</span>
+                <span class="library-item-count" id="libraryItemCount">0</span>
+              </div>
               <div class="library-toolbar-actions">
+                <div class="library-search">
+                  <input
+                    type="text"
+                    id="librarySearchInput"
+                    placeholder="Search installed items..."
+                    autocomplete="off"
+                  />
+                  <button
+                    type="button"
+                    class="library-search-clear"
+                    id="librarySearchClearBtn"
+                    aria-label="Clear library search"
+                  >
+                    &times;
+                  </button>
+                </div>
+                <button type="button" class="btn" id="libraryViewToggleBtn">
+                  List View
+                </button>
                 <button type="button" class="btn" id="workshopRefreshBtn">
                   Refresh
                 </button>
@@ -682,6 +733,16 @@
               </button>
               <button type="button" class="settings-tab" data-stab="patches">
                 Patches
+              </button>
+              <button type="button" class="settings-tab" data-stab="binds">
+                Binds
+              </button>
+              <button
+                type="button"
+                class="settings-tab"
+                data-stab="diagnostics"
+              >
+                Diagnostics
               </button>
             </div>
 
@@ -1924,6 +1985,97 @@
                       id="settingsFullVram"
                       data-setting="fullVram"
                     ></button>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                class="settings-tab-content"
+                id="settingsTabBinds"
+                data-stab="binds"
+              >
+                <div class="settings-section">
+                  <div class="settings-section-title">Custom Key Binds</div>
+                  <div class="bind-editor">
+                    <input
+                      type="text"
+                      class="settings-input bind-key-input"
+                      id="bindKeyInput"
+                      placeholder="Key (e.g. F5)"
+                      maxlength="32"
+                      autocomplete="off"
+                    />
+                    <input
+                      type="text"
+                      class="settings-input bind-command-input"
+                      id="bindCommandInput"
+                      placeholder="Command (e.g. cg_fov 100)"
+                      maxlength="512"
+                      autocomplete="off"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      id="bindSaveBtn"
+                    >
+                      Add / Update
+                    </button>
+                  </div>
+                </div>
+                <div class="settings-section bind-list-section">
+                  <div class="bind-list" id="bindList"></div>
+                </div>
+              </div>
+
+              <div
+                class="settings-tab-content"
+                id="settingsTabDiagnostics"
+                data-stab="diagnostics"
+              >
+                <div class="settings-section">
+                  <div class="settings-section-title">
+                    Repair Tools
+                    <span class="diagnostics-state" id="diagnosticsState"
+                      >Ready</span
+                    >
+                  </div>
+                  <div class="diagnostic-actions">
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      id="diagnosticsRunBtn"
+                    >
+                      Run Diagnostics
+                    </button>
+                    <button
+                      type="button"
+                      class="btn"
+                      id="diagnosticsRepairWorkshopBtn"
+                    >
+                      Repair Workshop Folders
+                    </button>
+                    <button type="button" class="btn" id="diagnosticsVerifyBtn">
+                      Verify Game Files
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-danger"
+                      id="diagnosticsClearProfileBtn"
+                    >
+                      Clear Profile Data
+                    </button>
+                  </div>
+                  <div class="settings-row-desc diagnostics-warning">
+                    Clearing profile data permanently removes boiii_players,
+                    including settings, saves, and binds.
+                  </div>
+                </div>
+                <div
+                  class="settings-section diagnostics-results"
+                  id="diagnosticsResults"
+                >
+                  <div class="diagnostics-empty">
+                    Run diagnostics to check the installation.
                   </div>
                 </div>
               </div>

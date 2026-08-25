@@ -52,11 +52,11 @@ int64_t handle_command(const game::net::netadr_t *address, const char *command,
   }
 
 #ifndef NDEBUG
-  game::net::netadr_str_t netadr_str_buf;
   game::trace(
       "[Network] handle_command called with address: \"%s\", command: \"%s\", "
       "localClientNum: %s",
-      address->toString(netadr_str_buf), command, serialize(localClientNum));
+      address ? address->toString(netadr_str_buf) : "NULL",
+      command ? command : "NULL", serialize(localClientNum));
 #endif
 
   const std::string cmd_string = utils::string::to_lower(command);
@@ -334,8 +334,8 @@ void com_error_oob_stub(const char *file, int32_t line, game::errorParm code,
                         "line: %d, code: %d,  message: \"%s\"\n",
                         callerAddr, file_str.c_str(), line,
                         static_cast<int32_t>(code), buffer, code);
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s",
-                        log_str.c_str());
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s", log_str.c_str());
   printf("%s", log_str.c_str());
   game::com::Com_Error_(file, line, code, "%s", buffer);
 }
@@ -547,6 +547,7 @@ struct component final : generic_component {
       utils::hook::call(0x14134D146_g,
                         utils::hook::assemble(handle_command_stub));
 
+      // Disable `echo` command in `CL_DispatchConnectionlessPacket`
       utils::hook::set<uint8_t>(0x14134D0FB_g, 0xEB);
     }
 

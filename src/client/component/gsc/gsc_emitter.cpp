@@ -10,6 +10,7 @@ namespace gsc_compiler {
 namespace {
 using namespace game;
 using namespace game::scr;
+using namespace game::scr::vm;
 using namespace game::scr::vm::op;
 
 uint32_t align_value(uint32_t val, uint32_t alignment) {
@@ -138,9 +139,10 @@ struct LineStartAddress {
 };
 
 struct emitter_state {
+  scriptInstance_t inst;
   export_entry *current_func;
   size_t current_export_index;
-  uint32_t script_namespace;
+  ScrVarCanonicalName_t script_namespace;
   std::string script_name;
   std::unordered_map<std::string, uint8_t> local_function_params;
 
@@ -180,9 +182,9 @@ struct emitter_state {
     hash_names.push_back({h, lower, line, params});
   }
 
-  emitter_state()
-      : current_func(nullptr), current_export_index(0), script_namespace(0),
-        next_label_id(0), temp_var_counter(0) {}
+  emitter_state(scriptInstance_t inst)
+      : inst(inst), current_func(nullptr), current_export_index(0),
+        script_namespace(0), next_label_id(0), temp_var_counter(0) {}
 
   int32_t new_label() { return next_label_id++; }
 
@@ -292,12 +294,12 @@ struct emitter_state {
                  uint8_t num_params, bool is_method, bool is_thread,
                  bool same_namespace, uint64_t line, bool builtin = false) {
 
-    if (!builtin && same_namespace) {
+    if (!builtin && (same_namespace || ns_hash == builtin::SYS_NS_HASH)) {
       if (is_method) {
-        if (gsc::builtin_method(func_hash)) {
+        if (gsc::builtin_method(inst, func_hash)) {
           builtin = true;
         }
-      } else if (gsc::builtin_function(func_hash)) {
+      } else if (gsc::builtin_function(inst, func_hash)) {
         builtin = true;
       }
     }
@@ -434,7 +436,9 @@ void collect_locals(const ast_ptr &node, std::vector<std::string> &locals,
     }
   }
 
-  if (node->type == node_type::n_waittill && node->children.size() > 1) {
+  if ((node->type == node_type::n_waittill ||
+       node->type == node_type::n_waittillmatch) &&
+      node->children.size() > 1) {
     const std::shared_ptr<ast_node> &args = node->children[1]; // args block
     for (size_t i = 1; i < args->children.size();
          i++) // skip first (event name)
@@ -804,43 +808,80 @@ void emit_expression(emitter_state &s, const ast_ptr &node) {
     if (try_get_vector_constant(node->children[0], x) &&
         try_get_vector_constant(node->children[1], y) &&
         try_get_vector_constant(node->children[2], z)) {
-      s.emit_op(Opcode::GetVector, node->line);
+      if (VectorConstant::can_pack(x, y, z)) {
+        const VectorConstant packed = VectorConstant::pack(x, y, z);
+        s.emit_op(Opcode::VectorConstant, node->line);
+        s.emit_u8(packed, node->children[0]->line);
+        s.emit_u8(0,
+                  node->children[2]->line); // Padding byte
 
-      /*
-       Everywhere that script vectors are accessed in the engine,
-       the vector's address is assumed to be that of an allocated node in the
-       script memory tree pool.
+      } else {
+        /*
+           The mod tools compiler also prefers to use a `vectorscale`d vector
+           constant, where possible, rather than hard-code the same vector with
+           the `Vector` opcode. However, we have fixed handling of the
+           `GetVector` opcode in the engine, which is more efficient than
+           computing the compile-time constant vector, so we will prefer
+           to use `GetVector` here instead.
 
-       Following access, the engine checks the node's refcount (the `uint8_t`
-       immediately preceding the vector's value pointer), and attempts to free
-       the allocation if the refcount is 0.
+           An example of where this applies is for the vector
+           `(128.0, 128.0, 128.0)`. In this case, the mod tools compiler would
+           emit:
+           ```gscasm
+           OP_GetFloat 128.0
+           OP_VectorConstant 0x2A ; ( 1, 1, 1 )
+           OP_VectorScale
+           ```
 
-       This is obviously problematic in the case of a vector embedded in the
-       script bytecode via `GetVector`, because if the byte immediately
-       preceding the vector's float values is a `0x00` alignment byte, the
-       refcount will be seen as zero, the engine will attempt to free the
-       address of the vector's first float value as though it were a memory
-       tree allocation, and an exception will be thrown.
+           This will hold true for any vector where all elements have the same
+           value, or the same value negated, where the corresponding constant
+           element will be `-1`. It will also hold true for vectors where all
+           elements of a differing value have value `0.0`, e.g.:
+           ```gscasm
+           OP_GetFloat 128.0
+           OP_VectorConstant 0x02 ; ( 0, 0, 1 )
+           OP_VectorScale
+           ```
+           for generation of the vector `( 0.0, 0.0, 128.0 )`.
+        */
+        s.emit_op(Opcode::GetVector, node->line);
 
-       If the byte immediately preceding the first vector float value is the
-       high byte of the opcode (no alignment bytes were needed), the refcount
-       will not be seen as zero, and this will not occur.
+        /*
+         Everywhere that script vectors are accessed in the engine,
+         the vector's address is assumed to be that of an allocated node in the
+         script memory tree pool.
 
-       Usually, the engine would try to _decrement_ the refcount upon the
-       variable's release, but we have modified this behaviour to only
-       decrement the vector's refcount and attempt to free if the vector was
-       allocated in the script memory tree pool. This is done via a hook to
-       `ScrVar_ReleaseValue`.
+         Following access, the engine checks the node's refcount (the `uint8_t`
+         immediately preceding the vector's value pointer), and attempts to free
+         the allocation if the refcount is 0.
 
-       Thus, in order to ensure the engine never attempts to erroneously free
-       this compile time constant vector, we fill its alignment bytes with
-       `0xFF`.
-      */
-      s.emit_u32_aligned(0xFF);
+         This is obviously problematic in the case of a vector embedded in the
+         script bytecode via `GetVector`, because if the byte immediately
+         preceding the vector's float values is a `0x00` alignment byte, the
+         refcount will be seen as zero, the engine will attempt to free the
+         address of the vector's first float value as though it were a memory
+         tree allocation, and an exception will be thrown.
 
-      s.emit_float(x, node->children[0]->line);
-      s.emit_float(y, node->children[1]->line);
-      s.emit_float(z, node->children[2]->line);
+         If the byte immediately preceding the first vector float value is the
+         high byte of the opcode (no alignment bytes were needed), the refcount
+         will not be seen as zero, and this will not occur.
+
+         Usually, the engine would try to _decrement_ the refcount upon the
+         variable's release, but we have modified this behaviour to only
+         decrement the vector's refcount and attempt to free if the vector was
+         allocated in the script memory tree pool. This is done via a hook to
+         `ScrVar_ReleaseValue`.
+
+         Thus, in order to ensure the engine never attempts to erroneously free
+         this compile time constant vector, we fill its alignment bytes with
+         `0xFF`.
+        */
+        s.emit_u32_aligned(0xFF);
+
+        s.emit_float(x, node->children[0]->line);
+        s.emit_float(y, node->children[1]->line);
+        s.emit_float(z, node->children[2]->line);
+      }
       break;
     }
 
@@ -944,21 +985,29 @@ void emit_expression(emitter_state &s, const ast_ptr &node) {
   case node_type::n_func_ref: {
     ScrVarCanonicalName_t func_hash = gsc::gsc_hash(node->value);
     ScrVarCanonicalName_t ns_hash = s.script_namespace;
+    uint8_t flags = IMPORT_FUNC_GETFUNCTION;
+    Opcode op = Opcode::GetFunction;
+
     if (!node->children.empty() && !node->children[0]->value.empty()) {
       ns_hash = gsc::gsc_hash(normalize_ns(node->children[0]->value));
-      if (is_path_namespace(node->children[0]->value))
+      if (is_path_namespace(node->children[0]->value)) {
         auto_include_path(s, node->children[0]->value);
+      }
     }
 
-    uint8_t flags = IMPORT_FUNC_GETFUNCTION;
-    if (ns_hash == s.script_namespace)
+    if (ns_hash == s.script_namespace || ns_hash == builtin::SYS_NS_HASH) {
+      if (gsc::builtin(s.inst, func_hash)) {
+        ns_hash = builtin::SYS_NS_HASH;
+        op = Opcode::GetAPIFunction;
+      }
       flags |= IMPORT_CALL_LOCAL;
+    }
 
     size_t import_idx = s.add_import(func_hash, ns_hash, 0, flags);
 
     uint32_t opcode_pos =
         static_cast<uint32_t>(s.current_func->bytecode.size());
-    s.emit_op(Opcode::GetFunction, node->line);
+    s.emit_op(op, node->line);
     s.imports[import_idx].references.push_back(
         {s.current_export_index, opcode_pos});
     {
@@ -984,8 +1033,10 @@ void emit_expression(emitter_state &s, const ast_ptr &node) {
     uint8_t num_params = static_cast<uint8_t>(args_node->children.size());
 
     if (ns_node->value.empty() && is_builtin(lower_name)) {
-      for (const std::shared_ptr<ast_node> &arg : args_node->children)
-        emit_expression(s, arg);
+      for (int i = static_cast<int>(args_node->children.size()) - 1; i >= 0;
+           i--) {
+        emit_expression(s, args_node->children[i]);
+      }
       try_emit_builtin(s, lower_name, node->line);
       break;
     }
@@ -1268,6 +1319,7 @@ void emit_statement(emitter_state &s, const ast_ptr &node) {
 
     if (expr->type == node_type::n_endon || expr->type == node_type::n_notify ||
         expr->type == node_type::n_waittill ||
+        expr->type == node_type::n_waittillmatch ||
         expr->type == node_type::n_assign ||
         expr->type == node_type::n_inc_dec) {
       emit_statement(s, expr);
@@ -1577,7 +1629,8 @@ void emit_statement(emitter_state &s, const ast_ptr &node) {
     break;
   }
 
-  case node_type::n_waittill: {
+  case node_type::n_waittill:
+  case node_type::n_waittillmatch: {
     // children[0] = object, children[1] = args (first is event name, rest are
     // vars)
     const std::shared_ptr<ast_node> &obj = node->children[0];
@@ -1590,7 +1643,22 @@ void emit_statement(emitter_state &s, const ast_ptr &node) {
 
     emit_expression(s, args->children[0]); // event name
     emit_owner(s, obj); // object (uses GetLevel, not GetLevelObject)
-    s.emit_op(Opcode::WaitTill, node->line);
+    /*
+      In the VM opcode handlers, `WaitTillMatch` == `WaitTill`; `WaitTill`'s
+      handler defers to `WaitTillMatch`.
+
+      However, script thread wake and notification also explicitly checks the
+      currently executed opcode and behaves differently depending on whether
+      WaitTillMatch` is the currently executed opcode.
+
+      `WaitTillMatch` also increments the executed bytecode position in its
+      error handler, while `WaitTill` does not.
+
+      As such, we must use the opcode specified by the script's implementation.
+    */
+    s.emit_op(node->type == node_type::n_waittill ? Opcode::WaitTill
+                                                  : Opcode::WaitTillMatch,
+              node->line);
 
     for (size_t i = 1; i < args->children.size(); ++i) {
       if (args->children[i]->type == node_type::n_identifier) {
@@ -1974,9 +2042,10 @@ std::vector<uint8_t> build_gdb(emitter_state &s, const GSC_OBJ *obj) {
 }
 } // namespace
 
-emitter_result emit(const ast_ptr &root, const std::string &script_name) {
+emitter_result emit(scriptInstance_t inst, const ast_ptr &root,
+                    const std::string &script_name) {
   emitter_result result{};
-  emitter_state state;
+  emitter_state state(inst);
   state.script_name = script_name;
 
   {

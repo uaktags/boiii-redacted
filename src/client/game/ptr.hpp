@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <intrin.h>
+#include <span>
 
 namespace game {
 
@@ -163,7 +164,7 @@ template <typename T> inline bool readable_ptr(const T *ptr) {
 }
 
 inline constexpr bool nonnull(uintptr_t ptr) {
-  return ptr > 0x000000100000000 && ptr < 0x00007FFFFFFFFFFF;
+  return ptr >= 0x00000000'00010000 && ptr <= 0x00007FFF'FFFFFFFF;
 }
 
 template <typename T> inline constexpr bool nonnull(const T *ptr) {
@@ -180,6 +181,12 @@ template <typename A, typename B, IntegralLike<size_t> S>
 inline constexpr bool contains(const A *base, const S size, const B *cmp) {
   return contains<S>(reinterpret_cast<uintptr_t>(base), size,
                      reinterpret_cast<uintptr_t>(cmp));
+}
+
+template <typename A, typename B>
+inline constexpr bool contains(const std::span<const A> base, const B *cmp) {
+  return contains<uint64_t>(reinterpret_cast<uintptr_t>(base.data()),
+                            base.size(), reinterpret_cast<uintptr_t>(cmp));
 }
 
 template <typename T, IntegralLike<T> Align>

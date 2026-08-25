@@ -5,7 +5,7 @@
 #include "stack_guard.hpp"
 
 namespace ui_scripting {
-using namespace game::ui::lua::hks;
+using namespace game::lua::hks;
 
 hks_object::hks_object(const HksObject &value) { this->assign(value); }
 
@@ -166,7 +166,7 @@ script_value::script_value(const function &value) {
  **************************************************************/
 
 template <> bool script_value::is<int>() const {
-  const auto number = this->get_raw().v.number;
+  const HksNumber number = this->get_raw().v.number;
   return this->get_raw().t == HksObjectType::TNUMBER &&
          static_cast<int>(number) == number;
 }
