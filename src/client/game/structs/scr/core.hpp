@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <span>
 #include <vector>
+#include <cassert>
+#include <array>
+#include <type_traits>
+
 #include "../core.hpp"
 #include "../weapon.hpp"
 #include "game/structs/scr/primitives.hpp"
@@ -19,11 +23,6 @@ struct HunkUser;
 }
 namespace scr {
 typedef str<272> scr_path_t;
-
-#include <cstdint>
-#include <cassert>
-#include <array>
-#include <type_traits>
 
 // Primary template declaration
 template <typename T,
@@ -1595,7 +1594,6 @@ public:
   XCamTargetModelFrame lerpModelFrame;
 };
 
-typedef intptr_t scr_funcptr_t;
 struct scr_func_t {
   char funcinfo[260];
   scr_funcptr_t func;
@@ -1911,8 +1909,7 @@ ASSERT_SIZE(GSC_OBJ, 0x48);
 #pragma pack(push, 1)
 struct ScriptParseTree {
   const char *name;
-  int32_t len;
-  uint8_t _padding0C[4];
+  size_t len;
   GSC_OBJ *buffer;
 };
 ASSERT_SIZE(ScriptParseTree, 0x18);
