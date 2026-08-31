@@ -5,7 +5,7 @@
 #include <sstream>
 #include <windows.h>
 
-#include "../str.hpp"
+#include <str.hpp>
 
 namespace utils::string {
 const char *va(const char *fmt, ...) {
@@ -209,11 +209,10 @@ std::string &rtrim(std::string &str) {
 std::string join(std::vector<std::string> strings,
                  const std::string &separator) {
   std::string result;
-  for (size_t i = 0; i < strings.size(); ++i) {
-    if (i > 0) {
-      result += separator;
-    }
+  result += strings[0];
 
+  for (size_t i = 1; i < strings.size(); ++i) {
+    result += separator;
     result += strings[i];
   }
 
@@ -225,4 +224,24 @@ void trim(std::string &str) { ltrim(rtrim(str)); }
 void copy(char *dest, const size_t max_size, const char *src) {
   strscpy(dest, src, max_size);
 }
+
+std::string hexdump(uintptr_t ptr, size_t size) {
+  if (ptr && size > 0) {
+
+    static constexpr char hex_digits[] = "0123456789ABCDEF";
+    const uint8_t *bytes = reinterpret_cast<const uint8_t *>(ptr);
+
+    std::string hex_str;
+    hex_str.reserve(size * 2);
+
+    for (size_t i = 0; i < size; ++i) {
+      hex_str.push_back(hex_digits[(bytes[i] >> 4) & 0x0F]); // High nibble
+      hex_str.push_back(hex_digits[bytes[i] & 0x0F]);        // Low nibble
+    }
+
+    return hex_str;
+  }
+  return "";
+}
+
 } // namespace utils::string

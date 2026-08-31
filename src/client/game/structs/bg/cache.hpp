@@ -1,6 +1,7 @@
 #pragma once
-#include "game/structs/macros.hpp"
-#include "game/structs/db/xasset/core.hpp"
+
+#include <game/structs/macros.hpp>
+#include <game/structs/db/xasset/core.hpp>
 
 #include <cstdint>
 #include <str.hpp>
@@ -31,12 +32,19 @@ template <typename T> union BGCacheInstancePool {
            "bgCacheInstance::SERVER <= index < bgCacheInstance::COUNT");
   }
 
+  inline constexpr void assert_range(size_t index) volatile {
+    assert(index < +bgCacheInstance::COUNT &&
+           "index to BGCacheInstancePool must be within range "
+           "bgCacheInstance::SERVER <= index < bgCacheInstance::COUNT");
+  }
+
   template <IntegralLike Index>
   inline constexpr const T &get(Index index_arg) const {
     const index_t index = static_cast<index_t>(index_arg);
     assert_range(index);
     return pool[index];
   }
+
   template <IntegralLike Index>
   inline constexpr const T &operator[](Index index) const {
     return get(index);
@@ -51,7 +59,23 @@ template <typename T> union BGCacheInstancePool {
     return get(index);
   }
 
+  template <IntegralLike Index>
+  inline constexpr volatile T &get(Index index_arg) volatile {
+    const index_t index = static_cast<index_t>(index_arg);
+    assert_range(index);
+    return pool[index];
+  }
+
+  template <IntegralLike Index>
+  inline constexpr volatile T &operator[](Index index) volatile {
+    return get(index);
+  }
+
   inline constexpr auto size() const noexcept {
+    return +bgCacheInstance::COUNT;
+  }
+
+  inline constexpr auto size() volatile noexcept {
     return +bgCacheInstance::COUNT;
   }
 };
@@ -233,7 +257,7 @@ typedef bgCachedData<db::xasset::TagFxSet> bgCachedTagFxSet;
 typedef djb2Hash_t BGCacheNameHash;
 PACKED(struct bgCachedGenericData {
   str1024_t name;
-  int32_t nameHash;
+  djb2Hash_t nameHash;
   volatile uint8_t refCount;
   uint8_t _padding0D[3];
 
@@ -244,13 +268,20 @@ PACKED(struct bgCachedGenericData {
 
   inline constexpr void clearName() volatile {
     nameHash = BGCACHE_NAMEHASH_NULLPTR;
-    name[0] = '\0';
+    for (size_t i = 0; i < std::size(name); ++i) {
+      name[i] = '\0';
+    }
+  }
+
+  inline static constexpr djb2Hash_t hashName(const char *name) {
+    return djb2<BGCACHE_NAMEHASH_DJB2_INITIAL_SEED,
+                BGCACHE_NAMEHASH_DJB2_CONSTANT>(name);
+    ;
   }
 
   inline constexpr void setName(const char *new_name) volatile {
     if (new_name) {
-      nameHash = djb2<BGCACHE_NAMEHASH_DJB2_INITIAL_SEED,
-                      BGCACHE_NAMEHASH_DJB2_CONSTANT>(new_name);
+      nameHash = hashName(new_name);
       strscpy(name, new_name);
     } else {
       clearName();
@@ -329,6 +360,18 @@ struct bgCacheChecksumInfo {
   volatile uint32_t clientChecksum;
 };
 
+struct BGCacheInfoDef {
+  BGCacheTypes type;
+  str128_t name;
+};
+
+PACKED(struct BGCacheInfo {
+  const char *name;
+  BGCacheInfoDef *def;
+  int32_t defCount;
+  uint8_t _padding14[4];
+});
+ASSERT_SIZE(BGCacheInfo, 0x18);
 } // namespace cache
 } // namespace bg
 } // namespace game

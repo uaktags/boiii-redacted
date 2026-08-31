@@ -5,7 +5,7 @@
 #include "stack_guard.hpp"
 
 namespace ui_scripting {
-using namespace game::ui::lua::hks;
+using namespace game::lua::hks;
 
 hks_object::hks_object(const HksObject &value) { this->assign(value); }
 
@@ -153,6 +153,14 @@ script_value::script_value(const table &value) {
   this->value_ = obj;
 }
 
+script_value::script_value(HashTable *value) {
+  HksObject obj{};
+  obj.t = HksObjectType::TTABLE;
+  obj.v.table = value;
+
+  this->value_ = obj;
+}
+
 script_value::script_value(const function &value) {
   HksObject obj{};
   obj.t = value.type;
@@ -166,7 +174,7 @@ script_value::script_value(const function &value) {
  **************************************************************/
 
 template <> bool script_value::is<int>() const {
-  const auto number = this->get_raw().v.number;
+  const HksNumber number = this->get_raw().v.number;
   return this->get_raw().t == HksObjectType::TNUMBER &&
          static_cast<int>(number) == number;
 }
@@ -179,8 +187,8 @@ template <> int script_value::get() const {
   return static_cast<int>(this->get_raw().v.number);
 }
 
-template <> unsigned int script_value::get() const {
-  return static_cast<unsigned int>(this->get_raw().v.number);
+template <> uint32_t script_value::get() const {
+  return static_cast<uint32_t>(this->get_raw().v.number);
 }
 
 /***************************************************************
@@ -221,11 +229,19 @@ template <> bool script_value::is<std::string>() const {
   return this->is<const char *>();
 }
 
+template <> bool script_value::is<std::string_view>() const {
+  return this->is<const char *>();
+}
+
 template <> const char *script_value::get() const {
   return this->get_raw().v.str->m_data;
 }
 
 template <> std::string script_value::get() const {
+  return this->get<const char *>();
+}
+
+template <> std::string_view script_value::get() const {
   return this->get<const char *>();
 }
 

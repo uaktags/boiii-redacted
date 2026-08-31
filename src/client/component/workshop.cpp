@@ -20,14 +20,17 @@
 #include "toast.hpp"
 
 #include <game/impl/db/xzone/xzone.hpp>
-#include <game/impl/ui/lua/lua.hpp>
+#include <game/impl/lua/lua.hpp>
 #include <game/impl/ugc/ugc.hpp>
 
 #include <condition_variable>
 #include <mutex>
 #include <regex>
-#include <unordered_map>
 #include <shellapi.h>
+
+#include <frozen/unordered_map.h>
+#include <frozen/unordered_set.h>
+#include <frozen/string.h>
 
 using namespace game::db;
 using XZoneName = xzone::XZoneName;
@@ -39,7 +42,7 @@ std::thread download_thread{};
 
 utils::hook::detour CL_SetupForNewServerMap_hook;
 
-static const std::unordered_map<std::string, std::string> dlc_links = {
+inline constexpr std::pair<frozen::string, frozen::string> DLC_LINK_ARRAY[] = {
     {"zm_zod", "https://forum.ezz.lol/topic/6/bo3-dlc"},
     {"zm_castle", "https://forum.ezz.lol/topic/6/bo3-dlc"},
     {"zm_island", "https://forum.ezz.lol/topic/6/bo3-dlc"},
@@ -54,6 +57,9 @@ static const std::unordered_map<std::string, std::string> dlc_links = {
     {"zm_sumpf", "https://forum.ezz.lol/topic/6/bo3-dlc"},
     {"zm_factory", "https://forum.ezz.lol/topic/6/bo3-dlc"},
     {"zm_asylum", "https://forum.ezz.lol/topic/6/bo3-dlc"}};
+inline constexpr frozen::unordered_map<frozen::string, frozen::string,
+                                       std::size(DLC_LINK_ARRAY)>
+    DLC_LINKS = frozen::make_unordered_map(DLC_LINK_ARRAY);
 std::mutex dlc_mutex;
 std::condition_variable dlc_cv;
 std::string pending_dlc_map;
@@ -74,21 +80,19 @@ void dlc_popup_thread_func() {
     pending_dlc_map.clear();
     lock.unlock();
 
-    const auto it = dlc_links.find(map);
-    if (it != dlc_links.end()) {
-      const std::string link = it->second;
+    if (DLC_LINKS.contains(frozen::string(map.data()))) {
+      const char *link = DLC_LINKS.at(frozen::string(map.data())).data();
       const std::string map_copy = map;
       scheduler::once(
           [map_copy, link] {
             game::ui::UI_OpenErrorPopupWithMessage(
-                0, game::errorCode::UI,
+                game::LOCAL_CLIENT_0, game::errorCode::UI,
                 utils::string::va(
                     "Missing DLC map: %s\n\nOpening download page...\n%s",
-                    map_copy.c_str(), link.c_str()));
+                    map_copy.c_str(), link));
           },
           scheduler::main);
-      ShellExecuteA(nullptr, "open", link.c_str(), nullptr, nullptr,
-                    SW_SHOWNORMAL);
+      ShellExecuteA(nullptr, "open", link, nullptr, nullptr, SW_SHOWNORMAL);
     }
   }
 }
@@ -524,14 +528,17 @@ std::string get_mod_publisher_id() {
 
   return loaded_mod_id;
 }
+inline constexpr frozen::string ZM_DLC_MAP_ARRAY[] = {
+    "zm_asylum", "zm_castle",  "zm_cosmodrome", "zm_factory",    "zm_genesis",
+    "zm_island", "zm_moon",    "zm_prototype",  "zm_stalingrad", "zm_sumpf",
+    "zm_temple", "zm_theater", "zm_tomb",       "zm_zod",
+};
 
-constexpr bool is_zm_dlc_map(const std::string_view mapname) {
-  constexpr std::array<std::string_view, 14> ZM_DLC_MAPS = {
-      "zm_asylum", "zm_castle",  "zm_cosmodrome", "zm_factory",    "zm_genesis",
-      "zm_island", "zm_moon",    "zm_prototype",  "zm_stalingrad", "zm_sumpf",
-      "zm_temple", "zm_theater", "zm_tomb",       "zm_zod",
-  };
-  return std::binary_search(ZM_DLC_MAPS.begin(), ZM_DLC_MAPS.end(), mapname);
+inline constexpr frozen::unordered_set<frozen::string,
+                                       std::size(ZM_DLC_MAP_ARRAY)>
+    ZM_DLC_MAPS = frozen::make_unordered_set(ZM_DLC_MAP_ARRAY);
+inline constexpr bool is_zm_dlc_map(const std::string_view mapname) {
+  return ZM_DLC_MAPS.contains(mapname);
 }
 
 std::atomic<bool> downloading_workshop_item{false};
@@ -773,7 +780,7 @@ bool check_valid_usermap_id(const std::string &mapname,
       scheduler::once(
           [] {
             game::ui::UI_OpenErrorPopupWithMessage(
-                0, game::errorCode::UI,
+                game::LOCAL_CLIENT_0, game::errorCode::UI,
                 "You are already downloading a map in the background. You can "
                 "download only one item at a time.");
           },
@@ -841,7 +848,7 @@ bool check_valid_usermap_id(const std::string &mapname,
       scheduler::once(
           [name_copy] {
             game::ui::UI_OpenErrorPopupWithMessage(
-                0, game::errorCode::UI,
+                game::LOCAL_CLIENT_0, game::errorCode::UI,
                 utils::string::va(
                     "Missing usermap: %s\n\nThis server did not provide FastDL "
                     "and did not set workshop_id.\n\nSubscribe on Steam "
@@ -867,7 +874,7 @@ bool check_valid_mod_id(const std::string &mod,
       scheduler::once(
           [] {
             game::ui::UI_OpenErrorPopupWithMessage(
-                0, game::errorCode::UI,
+                game::LOCAL_CLIENT_0, game::errorCode::UI,
                 "You are already downloading a mod in the background. You can "
                 "download only one item at a time.");
           },
@@ -937,7 +944,7 @@ bool check_valid_mod_id(const std::string &mod,
         scheduler::once(
             [name_copy] {
               game::ui::UI_OpenErrorPopupWithMessage(
-                  0, game::errorCode::UI,
+                  game::LOCAL_CLIENT_0, game::errorCode::UI,
                   utils::string::va(
                       "Could not download: folder name is not numeric and "
                       "'workshop_id' dvar is empty.\nMod: %s\nSet workshop_id "
@@ -1025,7 +1032,8 @@ void com_error_missing_map_stub(const char *file, int line,
     scheduler::once(
         [addr_copy] {
           game::cbuf::Cbuf_AddText(
-              0, utils::string::va("connect %s\n", addr_copy.c_str()));
+              game::LOCAL_CLIENT_0,
+              utils::string::va("connect %s\n", addr_copy.c_str()));
         },
         scheduler::main, 3s);
 
@@ -1091,8 +1099,8 @@ void extend_ugc_pools() {
 
   if (game::is_client()) {
     Mods_Lists_GetInfoEntries_Slice_hook.create(
-        game::ui::lua::Mods_Lists_GetInfoEntries_Slice.get(),
-        game::ui::lua::Mods_Lists_GetInfoEntries_Slice_Impl);
+        game::lua::Mods_Lists_GetInfoEntries_Slice.get(),
+        game::lua::Mods_Lists_GetInfoEntries_Slice_Impl);
 
     UGC_SetMapLoadingImage_hook.create(game::ugc::UGC_SetMapLoadingImage.get(),
                                        game::ugc::UGC_SetMapLoadingImage_Impl);
@@ -1141,7 +1149,7 @@ public:
           return;
         if (is_any_download_active()) {
           game::ui::UI_OpenErrorPopupWithMessage(
-              0, game::errorCode::UI,
+              game::LOCAL_CLIENT_0, game::errorCode::UI,
               "A download is already in progress. Wait for it to finish.");
           return;
         }
@@ -1157,6 +1165,19 @@ public:
         download_thread = utils::thread::create_named_thread(
             "workshop_download", steamcmd::initialize_download, id, type_str);
         download_thread.detach();
+      });
+      command::add("loadmod", [](const command::params &params) {
+        if (params.size() > 0) {
+          const std::string mod = params.get(1);
+          for (size_t i = 0; i < game::ugc::modsPool.count; ++i) {
+            const game::ugc::WorkshopData *data = &game::ugc::modsPool.data[i];
+            if (std::string_view(data->internalName) == mod ||
+                std::string_view(data->publisherId) == mod) {
+              return game::ugc::UGC_LoadModByPublisherId(
+                  game::LOCAL_CLIENT_0, data->publisherId, true);
+            }
+          }
+        }
       });
 
       CL_SetupForNewServerMap_hook.create(

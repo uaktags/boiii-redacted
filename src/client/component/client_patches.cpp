@@ -248,7 +248,8 @@ void live_delayed_com_error_stub(const char *comErrorString, int32_t code) {
   void *return_address = _ReturnAddress();
   // Log caller and error message
   game::com::Com_Printf(
-      0, game::consoleLabel_e::DEFAULT,
+      game::consoleChannel_e::CHANNEL_DONT_FILTER,
+      game::consoleLabel_e::DEFAULT,
       "Live_DelayedComError called from 0x%p with message: %s and code: %d\n",
       return_address, comErrorString, code);
   printf(
@@ -327,7 +328,7 @@ T *Hunk_UserAlloc_ReturnStaticAllocation_FirstNull(
   T *result = &allocation[next_alloc_index.load(std::memory_order_acquire)];
 
   next_alloc_index.fetch_add(1, std::memory_order_release);
-  uint32_t storage_len = ARRAYSIZE(allocation);
+  uint32_t storage_len = std::size(allocation);
   next_alloc_index.compare_exchange_strong(
       storage_len, 0, std::memory_order_release, std::memory_order_acquire);
 
@@ -432,9 +433,8 @@ void store_tac_protected_allocs() {
 }
 
 template <const int32_t NonZeroVal>
+  requires(NonZeroVal != 0)
 int32_t Dvar_GetInt_NonZero(game::EngineDependentDvar dvar) {
-  static_assert(NonZeroVal != 0, "NonZeroVal == 0");
-
   int32_t val = game::Dvar_GetInt(dvar);
   if (val == 0) {
     return NonZeroVal;
@@ -494,36 +494,39 @@ template <const game::RestartMethod_t RestartMethod>
 void SV_RestartCmd_RotateOrDefault() {
   if (game::get_sv_running() &&
       !game::com::Com_SessionMode_IsMode(game::eModes::COUNT) /* main menu */) {
-    if (game::maprotation().value_or("").empty()) {
-      std::string_view curr_gametype;
-      const std::string_view curr_mapname =
-          game::get_mapname().value_or("mp_nuketown");
+    std::string_view curr_gametype;
+    const std::string_view curr_mapname =
+        game::get_mapname().value_or("mp_nuketown");
 
-      const std::optional<std::string_view> gametype_dvar_val =
-          game::gametype();
-      if (gametype_dvar_val.has_value()) {
-        curr_gametype = gametype_dvar_val.value();
+    const std::optional<std::string_view> gametype_dvar_val = game::gametype();
+    if (gametype_dvar_val.has_value()) {
+      curr_gametype = gametype_dvar_val.value();
 
-      } else if (utils::string::starts_with(curr_mapname,
-                                            MULTIPLAYER_MAP_PREFIX)) {
-        curr_gametype = TDM_GAMETYPE;
+    } else if (utils::string::starts_with(curr_mapname,
+                                          MULTIPLAYER_MAP_PREFIX)) {
+      curr_gametype = TDM_GAMETYPE;
 
-      } else if (utils::string::starts_with(curr_mapname, ZOMBIES_MAP_PREFIX)) {
-        curr_gametype = ZCLASSIC_GAMETYPE;
-      } else if (utils::string::starts_with(curr_mapname,
-                                            CAMPAIGN_MAP_PREFIX)) {
-        curr_gametype = CAMPAIGN_GAMETYPE;
-      }
-
-      const char *rotate_cmd = utils::string::va(
-          "gametype %s map %s", curr_gametype.data(), curr_mapname.data());
-      game::sv_maprotation->set(rotate_cmd);
+    } else if (utils::string::starts_with(curr_mapname, ZOMBIES_MAP_PREFIX)) {
+      curr_gametype = ZCLASSIC_GAMETYPE;
+    } else if (utils::string::starts_with(curr_mapname, CAMPAIGN_MAP_PREFIX)) {
+      curr_gametype = CAMPAIGN_GAMETYPE;
     }
-    game::cbuf::Cbuf_AddText(0, "map_rotate\n");
+
+    const char *rotate_cmd = utils::string::va(
+        "gametype %s map %s", curr_gametype.data(), curr_mapname.data());
+    game::sv_maprotation->set(rotate_cmd);
+    game::sv::SV_MapRotate_f();
   } else {
     game::sv::SV_MapRestart(RestartMethod);
   }
 }
+
+template <const IntegralLike auto Val> decltype(Val) return_const() {
+  return Val;
+}
+
+utils::hook::detour Com_FPSLimit_hook;
+
 } // namespace
 
 class component final : public client_component {
@@ -626,6 +629,10 @@ public:
     SV_FastRestart_f_hook.create(
         game::sv::SV_FastRestart_f.get(),
         SV_RestartCmd_RotateOrDefault<game::RestartMethod_t::ROUND>);
+    // Remove hard-coded FPS limiting - always defer to `com_maxfps` dvar value
+    Com_FPSLimit_hook.create(
+        game::com::Com_FPSLimit.get(),
+        return_const<std::numeric_limits<uint32_t>::max()>);
 
     patch_players_folder_name();
   }

@@ -15,7 +15,9 @@
 #include <utils/string.hpp>
 #include <str.hpp>
 
-#include "../../../component/workshop.hpp"
+#include <component/workshop.hpp>
+#include <component/asset_limits.hpp>
+#include <utils/io.hpp>
 
 namespace game {
 namespace ugc {
@@ -275,6 +277,22 @@ void UGC_LoadPools_Impl() {
   UGC_LoadModsPool_Impl();
 }
 
+void UGC_LoadItem_PrepareAssetPool(const std::filesystem::path &root) {
+  if (std::filesystem::is_directory(root)) {
+    for (const std::filesystem::path &file :
+         utils::io::list_files(root, true, false)) {
+      if (file.filename() == "assetlimits.txt") {
+        std::string data = utils::io::read_file(file);
+        const std::vector<asset_limits::pool_config> limits =
+            asset_limits::parse_list(data);
+        asset_limits::apply_list(limits);
+
+        break;
+      }
+    }
+  }
+}
+
 void UGC_LoadModByPublisherId_Impl(LocalClientNum_t localClientNum,
                                    const char *publisherId, bool reloadFS) {
   UGC_LoadPools_Impl();
@@ -305,6 +323,8 @@ void UGC_LoadModByPublisherId_Impl(LocalClientNum_t localClientNum,
     genMod.type = ZoneType::MOD;
     mod = &genMod;
   }
+  // PATCH: load "assetlimits.txt" asset pool configuration from zone tree
+  UGC_LoadItem_PrepareAssetPool(mod->absolutePathZoneFiles);
   UGC_LoadMod(localClientNum, mod, reloadFS);
 }
 
@@ -540,8 +560,36 @@ void UGC_LoadManifest_Impl(bool usermaps, bool mods,
 WorkshopData *UGC_LoadUsermapByPublisherId_Impl(const char *publisherId) {
 
   WorkshopData *usermap = UGC_GetUsermapByPublisherId(publisherId);
+  // PATCH: load "assetlimits.txt" asset pool configuration from zone tree
+  if (usermap) {
+    UGC_LoadItem_PrepareAssetPool(usermap->absolutePathZoneFiles);
+  }
   UGC_SetActiveUsermap(usermap);
   return usermap;
+}
+
+int32_t UGC_ZoneSourcePath_Impl(const char *name, const char *extension,
+                                int32_t size, char *buf, ZoneType zoneType,
+                                const char *publisherId) {
+  const char *cwd = sys::Sys_Cwd();
+
+  switch (zoneType) {
+  case ZoneType::OFFICIAL: {
+    return std::snprintf(buf, size, "%s/zone_source/%s%s", cwd, name,
+                         extension);
+  }
+  default: {
+    const WorkshopData *data = UGC_GetByPublisherId_Impl(zoneType, publisherId);
+
+    // Fall back to publisherId if WorkshopData is invalid or internalName is
+    // empty
+    const char *targetDir =
+        data && data->internalName[0] ? data->internalName : publisherId;
+
+    return std::snprintf(buf, size, "%s/%s/%s/zone_source/%s%s", cwd,
+                         dirname(zoneType), targetDir, name, extension);
+  }
+  }
 }
 } // namespace ugc
 } // namespace game

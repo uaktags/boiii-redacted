@@ -22,8 +22,8 @@ using namespace game;
 using namespace game::scr;
 
 namespace gsc::custom_builtins {
-CustomBuiltinMap<BuiltinFunctionDef> functions;
-CustomBuiltinMap<BuiltinMethodDef> methods;
+static ScrPool<CustomBuiltinMap<BuiltinFunctionDef>> functions;
+static ScrPool<CustomBuiltinMap<BuiltinMethodDef>> methods;
 } // namespace gsc::custom_builtins
 
 namespace script {
@@ -210,18 +210,18 @@ using namespace game::bg::cache;
 using namespace game::ui::he;
 using namespace game::scr::he;
 constexpr char hudelem_cfgstr_pool_entry_name_prefix[] =
-    "__hudelem_cfgstr_pool_entry_";
+    "__HUDELEM_CFGSTR_POOL_ENTRY_";
 constexpr uint8_t hudelem_cfgstr_pool_entry_name_number_max_suffix_len =
     sizeof(uint16_t) * 2 /* characters per byte */;
 constexpr uint8_t hudelem_cfgstr_pool_entry_name_len =
-    ARRAYSIZE(hudelem_cfgstr_pool_entry_name_prefix) +
+    std::size(hudelem_cfgstr_pool_entry_name_prefix) +
     hudelem_cfgstr_pool_entry_name_number_max_suffix_len;
 typedef str<hudelem_cfgstr_pool_entry_name_len> HudElemCfgStrPoolEntryName;
 consteval ui::he::HudElementPool<HudElemCfgStrPoolEntryName>
 build_hudelem_cfgstr_name_pool(
     ui::he::HudElementPool<HudElemCfgStrPoolEntryName> pool = {}) {
   for (uint16_t i = 0; i < pool.size(); ++i) {
-    append_hex<ARRAYSIZE(hudelem_cfgstr_pool_entry_name_prefix), uint16_t>(
+    append_hex<std::size(hudelem_cfgstr_pool_entry_name_prefix), uint16_t>(
         hudelem_cfgstr_pool_entry_name_prefix, i, pool.pool[i]);
   }
   return pool;
@@ -240,20 +240,20 @@ struct RegisteredCfgString {
 
   static constexpr BGCacheTypes CACHE_TYPE = BGCacheTypes::LOCSTRING;
 
-  inline void clear() noexcept {
+  inline void clear() volatile noexcept {
     idx.store(std::nullopt, std::memory_order_release);
   }
 
-  inline void set(int32_t loc_cfgstr_idx) {
+  inline void set(int32_t loc_cfgstr_idx) volatile {
     idx.store(loc_cfgstr_idx, std::memory_order_release);
   }
 
-  inline bool has_value() {
+  inline bool has_value() volatile {
     return idx.load(std::memory_order_acquire).has_value();
   }
 
   // Caller needs to have checked if idx has value prior to call
-  inline int32_t get_idx() {
+  inline int32_t get_idx() volatile {
     return idx.load(std::memory_order_acquire).value();
   }
 
@@ -263,11 +263,21 @@ struct RegisteredCfgString {
 
      Safety: Caller needs to have checked if `idx` has value prior to call
   */
-  inline int32_t abs_idx() {
+  inline int32_t abs_idx() volatile {
     return s_bgCacheTypeInfo->get(CACHE_TYPE).configStringStart + get_idx();
   }
 };
-static ui::he::HudElementPool<RegisteredCfgString> hudelem_cfgstr_pool = {};
+struct HudElemCfgStringPool : ui::he::HudElementPool<RegisteredCfgString> {
+  inline bool contains(int32_t loc_cfgstr_idx) volatile {
+    for (size_t i = 0; i < SIZE; ++i) {
+      if (this->pool[i].has_value() &&
+          this->pool[i].get_idx() == loc_cfgstr_idx) {
+        return true;
+      }
+    }
+    return false;
+  }
+} static hudelem_cfgstr_pool = {};
 
 void unregister_clear_hudelem_cfgstr(uint16_t hudElemIdx) {
   RegisteredCfgString *entry = &hudelem_cfgstr_pool[hudElemIdx];
@@ -286,8 +296,8 @@ namespace hecmd_settext {
 static HudElemMessage message_buf = {0};
 static HudElemMessage cleaned_message_buf = {0};
 inline void clear_message_bufs() {
-  memset(message_buf, 0, ARRAYSIZE(message_buf));
-  memset(cleaned_message_buf, 0, ARRAYSIZE(cleaned_message_buf));
+  memset(message_buf, 0, std::size(message_buf));
+  memset(cleaned_message_buf, 0, std::size(cleaned_message_buf));
 }
 
 void HECmd_SetText_ReuseCfgString(scriptInstance_t inst, scr_entref_t *entref) {
@@ -296,20 +306,20 @@ void HECmd_SetText_ReuseCfgString(scriptInstance_t inst, scr_entref_t *entref) {
 
     elem->reset_value();
     const uint32_t argc = Scr_GetNumParam(inst);
-
     Scr_ConstructMessageString(0, argc - 1, "Hud Elem String", message_buf,
-                               MAX_HUDELEM_MESSAGE_LEN);
+                               std::size(message_buf));
     com::Com_CleanStringForNetwork(message_buf, cleaned_message_buf,
-                                   MAX_HUDELEM_MESSAGE_LEN);
+                                   std::size(cleaned_message_buf));
 
     elem->elem.type = he_type_field_t::TEXT;
     const uint16_t hudElemIdx = entref->u.hudElemIndex;
-    RegisteredCfgString *pool_entry = &hudelem_cfgstr_pool[hudElemIdx];
+    volatile RegisteredCfgString *pool_entry = &hudelem_cfgstr_pool[hudElemIdx];
 
     const bgCacheInstance cache_inst = static_cast<bgCacheInstance>(inst);
     const int32_t localized_cfgstring_index =
         BG_Cache_GetLocStringIndex(cache_inst, cleaned_message_buf);
-    if (localized_cfgstring_index > 0) {
+    if (localized_cfgstring_index > 0 &&
+        !hudelem_cfgstr_pool.contains(localized_cfgstring_index)) {
       elem->elem.text = localized_cfgstring_index;
     }
     // Not a localized string. Need to register and/or modify the config string
@@ -332,10 +342,20 @@ void HECmd_SetText_ReuseCfgString(scriptInstance_t inst, scr_entref_t *entref) {
 
       volatile bgCachedGenericData *data =
           &s_bgCache->server.dataSet.localizedStrings[pool_entry->get_idx()];
+
+#ifndef NDEBUG
+      trace("[Scr][HECmd_SetText] Localized config string entry with "
+            "index 0x%lX, "
+            "absolute config string index 0x%lX: got localized string data "
+            "pointer: 0x%p",
+            pool_entry->get_idx(), pool_entry->abs_idx(),
+            game::derelocate(data));
+#endif
       data->setName(cleaned_message_buf);
       if (!data->refCount) {
         data->add_ref();
       }
+      s_bgCache->get(cache_inst).checksum.isDirty = true;
 
 #ifndef NDEBUG
       trace("[Scr][HECmd_SetText] Localized config string entry with "
@@ -386,7 +406,7 @@ void BG_Cache_HandleConfigStringChange_ReuseExisting(
       index >= s_bgCacheTypeInfo->locstring.configStringStart &&
       index < s_bgCacheTypeInfo->locstring.configStringStart +
                   static_cast<int32_t>(
-                      ARRAYSIZE(s_bgCache->client.dataSet.localizedStrings));
+                      std::size(s_bgCache->client.dataSet.localizedStrings));
 
   if (is_localized_string) {
     volatile bgCachedGenericData *data =
@@ -397,23 +417,18 @@ void BG_Cache_HandleConfigStringChange_ReuseExisting(
     if (!data->refCount) {
       data->add_ref();
     }
-
-    /*
-      Registration or modification of a config string with this index causes the
-     client to recompute its BG Cache checksum and validate it against the
-     server's - this is not a true config string modification.
-
-     In a release profile build (ours), an invalid checksum does not trigger an
-     error or corrective behaviour otherwise - it simply logs the mismatch to
-     BB, re-computes the checksum, and continues. This recomputation of the
-     checksum causes a noticeable, slight drop in performance for the ~1/2 a
-     second it is occurring, so it seems preferable to skip this.
-    */
-  } else if (index != s_bgCacheTypeInfo->debugstring.configStringStart +
-                          static_cast<int32_t>(ARRAYSIZE(
-                              s_bgCache->client.dataSet.debugStrings))) {
+    s_bgCache->client.checksum.isDirty = true;
+  } else {
     BG_Cache_HandleConfigStringChange_hook.invoke(localClientNum, index);
   }
+}
+
+template <const BuiltinMethod &hooked>
+void HECmd_ClearInvoke(scriptInstance_t inst, scr_entref_t *entref) {
+  if (entref->is_hudelem() && sv::sv->running()) {
+    unregister_clear_hudelem_cfgstr(entref->u.hudElemIndex);
+  }
+  hooked(inst, entref);
 }
 
 // HECmd script VM method hooks
@@ -421,6 +436,29 @@ inline void apply_hecmd_hooks() {
   BuiltinMethodDef *HECmd_SetText_def = const_cast<BuiltinMethodDef *>(
       &game::scr::builtin::table::hudElem_methods->SetText);
   HECmd_SetText_def->actionFunc = &hecmd_settext::HECmd_SetText_ReuseCfgString;
+
+#ifndef HOOK_CLEAR_HECMD
+#define HOOK_CLEAR_HECMD(name)                                                 \
+  static const BuiltinMethod HECmd_##name##_Orig =                             \
+      game::scr::builtin::table::hudElem_methods->name.actionFunc;             \
+  const_cast<BuiltinMethodDef *>(                                              \
+      &game::scr::builtin::table::hudElem_methods->name)                       \
+      ->actionFunc = HECmd_ClearInvoke<HECmd_##name##_Orig>;
+#endif
+
+  HOOK_CLEAR_HECMD(SetValue);
+  HOOK_CLEAR_HECMD(SetTimerUp);
+  HOOK_CLEAR_HECMD(SetTimer);
+  HOOK_CLEAR_HECMD(SetTenthsTimerUp);
+  HOOK_CLEAR_HECMD(SetTenthsTimer);
+  HOOK_CLEAR_HECMD(SetShader);
+  HOOK_CLEAR_HECMD(SetPlayerNameString);
+  HOOK_CLEAR_HECMD(SetMapNameString);
+  HOOK_CLEAR_HECMD(SetGameTypeString);
+  HOOK_CLEAR_HECMD(SetClockUp);
+  HOOK_CLEAR_HECMD(SetClock);
+  HOOK_CLEAR_HECMD(Reset);
+  HOOK_CLEAR_HECMD(Destroy);
 }
 
 inline void apply_hudelem_hooks() {
@@ -473,7 +511,8 @@ void gscr_println(scriptInstance_t inst) {
   }
   fprintf(stdout, "[Scr] %s\n", out.c_str());
   fflush(stdout);
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s\n", out.c_str());
+  game::com::Com_Printf(consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s\n", out.c_str());
 
 #ifndef NDEBUG
   trace("[Scr] %s", out.c_str());
@@ -508,7 +547,8 @@ void gscr_print(scriptInstance_t inst) {
   }
   fprintf(stdout, "[Scr] %s", out.c_str());
   fflush(stdout);
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s", out.c_str());
+  game::com::Com_Printf(consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s", out.c_str());
 
 #ifndef NDEBUG
   trace("[Scr] %s", out.c_str());
@@ -628,7 +668,8 @@ void gscr_printf(scriptInstance_t inst) {
     }
   }
 
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s", buffer.data());
+  game::com::Com_Printf(consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s", buffer.data());
   fprintf(stdout, "%s", buffer.data());
   fflush(stdout);
 
@@ -640,7 +681,8 @@ void gscr_printf(scriptInstance_t inst) {
 void gscr_executecommand(scriptInstance_t inst) {
   const char *cmd = Scr_GetString(inst, 0);
   if (cmd) {
-    game::cbuf::Cbuf_AddText(0, utils::string::va("%s\n", cmd));
+    game::cbuf::Cbuf_AddText(game::LOCAL_CLIENT_0,
+                             utils::string::va("%s\n", cmd));
   }
 }
 
@@ -854,27 +896,6 @@ void gscr_directoryexists(scriptInstance_t inst) {
   push(inst, utils::io::directory_exists(resolve_path(path)));
 }
 
-void gscr_listfiles(scriptInstance_t inst) {
-  const char *path = Scr_GetString(inst, 0);
-  if (!path || !is_safe_path(path)) {
-    push_string(inst, "");
-    return;
-  }
-  const std::filesystem::path full = resolve_path(path);
-  if (!utils::io::directory_exists(full)) {
-    push_string(inst, "");
-    return;
-  }
-  const std::vector<std::filesystem::path> files = utils::io::list_files(full);
-  std::string result;
-  for (const std::filesystem::path &f : files) {
-    if (!result.empty())
-      result += ",";
-    result += f.filename().string();
-  }
-  push_string(inst, result.c_str());
-}
-
 /*
  ls(path, recurse = false, include_directories = false)
  Lists files in a directory, optionally recursively and including
@@ -886,8 +907,6 @@ void gscr_ls(scriptInstance_t inst) {
     push(inst);
     return;
   }
-  fprintf(stderr, "ls: called with path %s\n", path);
-  fflush(stderr);
 
   bool recurse = Scr_GetBoolOptional(inst, 1, false);
   bool include_directories = Scr_GetBoolOptional(inst, 2, false);
@@ -1168,6 +1187,21 @@ void gscr_isstruct(scriptInstance_t inst) {
   }
 }
 
+void gscr_typename(scriptInstance_t inst) {
+  const uint32_t argc = Scr_GetNumParam(inst);
+  if (argc == 0) {
+    Scr_ParamError(inst, 0,
+                   "No argument provided to typename. syntax: typename(var)");
+  } else {
+    const ScrVarType var_type = Scr_GetValue(inst, 0)->type;
+    const char *name = var_typename->valid_index(var_type)
+                           ? var_typename->get(var_type)
+                           : "INVALID";
+
+    push(inst, name);
+  }
+}
+
 void gscr_ismenucached(scriptInstance_t inst) {
   const uint32_t argc = Scr_GetNumParam(inst);
   if (argc == 0) {
@@ -1210,7 +1244,8 @@ void gscr_vector(scriptInstance_t inst) {
           const std::vector<volatile var::ScrVarValue_t *> arg =
               Scr_GetArray(inst, 0);
 
-          for (size_t i = 0; i < std::min(arg.size(), result.size()); ++i) {
+          for (size_t i = 0; i < std::min<size_t>(arg.size(), result.size());
+               ++i) {
             result[i] = ScrVar_CastFloat(arg[i]);
           }
           break;
@@ -1370,8 +1405,9 @@ BuiltinFunction Scr_GetFunction_SearchCustom(ScrVarCanonicalName_t canonId,
                                              BuiltinType *type,
                                              int32_t *min_args,
                                              int32_t *max_args) {
-  if (custom_builtins::functions.map.contains(canonId)) {
-    const BuiltinFunctionDef *def = &custom_builtins::functions.map[canonId];
+  if (custom_builtins::functions.server.map.contains(canonId)) {
+    const BuiltinFunctionDef *def =
+        &custom_builtins::functions.server.map[canonId];
 
     *type = def->type;
     *min_args = def->min_args;
@@ -1388,8 +1424,8 @@ utils::hook::detour Scr_GetMethod_hook;
 BuiltinMethod Scr_GetMethod_SearchCustom(ScrVarCanonicalName_t canonId,
                                          BuiltinType *type, int32_t *min_args,
                                          int32_t *max_args) {
-  if (custom_builtins::methods.map.contains(canonId)) {
-    const BuiltinMethodDef *def = &custom_builtins::methods.map[canonId];
+  if (custom_builtins::methods.server.map.contains(canonId)) {
+    const BuiltinMethodDef *def = &custom_builtins::methods.server.map[canonId];
 
     *type = def->type;
     *min_args = def->min_args;
@@ -1405,8 +1441,8 @@ BuiltinMethod Scr_GetMethod_SearchCustom(ScrVarCanonicalName_t canonId,
 utils::hook::detour Scr_GetFunctionReverseLookup_hook;
 ScrVarCanonicalName_t
 Scr_GetFunctionReverseLookup_SearchCustom(BuiltinFunction func) {
-  if (custom_builtins::functions.reverse.contains(func)) {
-    return custom_builtins::functions.reverse[func];
+  if (custom_builtins::functions.server.reverse.contains(func)) {
+    return custom_builtins::functions.server.reverse[func];
   }
   return Scr_GetFunctionReverseLookup_hook.invoke<ScrVarCanonicalName_t>(func);
 }
@@ -1414,11 +1450,68 @@ Scr_GetFunctionReverseLookup_SearchCustom(BuiltinFunction func) {
 utils::hook::detour Scr_GetMethodReverseLookup_hook;
 ScrVarCanonicalName_t
 Scr_GetMethodReverseLookup_SearchCustom(BuiltinMethod method) {
-  if (custom_builtins::methods.reverse.contains(method)) {
-    return custom_builtins::methods.reverse[method];
+  if (custom_builtins::methods.server.reverse.contains(method)) {
+    return custom_builtins::methods.server.reverse[method];
   }
   return Scr_GetMethodReverseLookup_hook.invoke<ScrVarCanonicalName_t>(method);
 }
+
+utils::hook::detour CScr_GetFunction_hook;
+BuiltinFunction CScr_GetFunction_SearchCustom(ScrVarCanonicalName_t canonId,
+                                              BuiltinType *type,
+                                              int32_t *min_args,
+                                              int32_t *max_args) {
+  if (custom_builtins::functions.client.map.contains(canonId)) {
+    const BuiltinFunctionDef *def =
+        &custom_builtins::functions.client.map[canonId];
+
+    *type = def->type;
+    *min_args = def->min_args;
+    *max_args = def->max_args;
+
+    return def->actionFunc;
+  }
+
+  return CScr_GetFunction_hook.invoke<BuiltinFunction>(canonId, type, min_args,
+                                                       max_args);
+}
+
+utils::hook::detour CScr_GetMethod_hook;
+BuiltinMethod CScr_GetMethod_SearchCustom(ScrVarCanonicalName_t canonId,
+                                          BuiltinType *type, int32_t *min_args,
+                                          int32_t *max_args) {
+  if (custom_builtins::methods.client.map.contains(canonId)) {
+    const BuiltinMethodDef *def = &custom_builtins::methods.client.map[canonId];
+
+    *type = def->type;
+    *min_args = def->min_args;
+    *max_args = def->max_args;
+
+    return def->actionFunc;
+  }
+
+  return CScr_GetMethod_hook.invoke<BuiltinMethod>(canonId, type, min_args,
+                                                   max_args);
+}
+
+utils::hook::detour CScr_GetFunctionReverseLookup_hook;
+ScrVarCanonicalName_t
+CScr_GetFunctionReverseLookup_SearchCustom(BuiltinFunction func) {
+  if (custom_builtins::functions.client.reverse.contains(func)) {
+    return custom_builtins::functions.client.reverse[func];
+  }
+  return CScr_GetFunctionReverseLookup_hook.invoke<ScrVarCanonicalName_t>(func);
+}
+
+utils::hook::detour CScr_GetMethodReverseLookup_hook;
+ScrVarCanonicalName_t
+CScr_GetMethodReverseLookup_SearchCustom(BuiltinMethod method) {
+  if (custom_builtins::methods.client.reverse.contains(method)) {
+    return custom_builtins::methods.client.reverse[method];
+  }
+  return CScr_GetMethodReverseLookup_hook.invoke<ScrVarCanonicalName_t>(method);
+}
+
 void PlayerCmd_IsHost_DelegateToFirstClient(scriptInstance_t inst,
                                             scr_entref_t *entref) {
   if (entref->classnum == 0) {
@@ -1457,9 +1550,23 @@ struct component final : generic_component {
     Scr_GetMethod_hook.create(game::scr::builtin::Scr_GetMethod.get(),
                               Scr_GetMethod_SearchCustom);
 
+    CScr_GetFunctionReverseLookup_hook.create(
+        game::scr::builtin::cscr::CScr_GetFunctionReverseLookup.get(),
+        CScr_GetFunctionReverseLookup_SearchCustom);
+    CScr_GetMethodReverseLookup_hook.create(
+        game::scr::builtin::cscr::CScr_GetMethodReverseLookup.get(),
+        CScr_GetMethodReverseLookup_SearchCustom);
+
+    CScr_GetFunction_hook.create(
+        game::scr::builtin::cscr::CScr_GetFunction.get(),
+        CScr_GetFunction_SearchCustom);
+    CScr_GetMethod_hook.create(game::scr::builtin::cscr::CScr_GetMethod.get(),
+                               CScr_GetMethod_SearchCustom);
+
     // Core
-    register_builtin("replacefunc", gscr_replacefunc, 2);
-    register_builtin("executecommand", gscr_executecommand, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "replacefunc", gscr_replacefunc, 2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "executecommand",
+                     gscr_executecommand, 1);
     register_builtin("say", gscr_say, 1);
     register_builtin("tell", gscr_tell::func, 2);
     register_builtin("tell", gscr_tell::method, 1);
@@ -1473,19 +1580,11 @@ struct component final : generic_component {
     register_builtin("readfile", gscr_readfile, 1);
     register_builtin("appendfile", gscr_appendfile, 2);
     register_builtin("fileexists", gscr_fileexists, 1);
-    register_builtin({"removefile", "rm"}, gscr_rm, 1, 2);
-    register_builtin({"rmdir", "removedirectory"}, gscr_removedirectory, 1);
+    register_builtin<2>({"removefile", "rm"}, gscr_rm, 1, 2);
+    register_builtin<2>({"rmdir", "removedirectory"}, gscr_removedirectory, 1);
     register_builtin("filesize", gscr_filesize, 1);
-    register_builtin({"mkdir", "createdirectory"}, gscr_createdirectory, 1);
+    register_builtin<2>({"mkdir", "createdirectory"}, gscr_createdirectory, 1);
     register_builtin("directoryexists", gscr_directoryexists, 1);
-
-    register_builtin(
-        "listfiles",
-        deprecate<gscr_listfiles, "listfiles", "ls",
-                  "is being phased out in favor of `ls`. `ls` returns an "
-                  "array of paths rather than a line-delimited "
-                  "list of paths, returned as one string.">,
-        1);
     register_builtin("ls", gscr_ls, 1, 3);
 
     // JSON
@@ -1505,29 +1604,38 @@ struct component final : generic_component {
     register_builtin("int64_tostring", gscr_int64_tostring, 1);
 
     // Function lookup
-    register_builtin("getfunction", gscr_getfunction, 2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "getfunction", gscr_getfunction, 2);
 
     // Console commands
-    register_builtin("addcommand", gscr_addcommand, 1, 2);
-    register_builtin("getcommand", gscr_getcommand, 0, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "addcommand", gscr_addcommand, 1,
+                     2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "getcommand", gscr_getcommand, 0,
+                     1);
 
     // Utility
-    register_builtin("clearreplacefuncs", gscr_clearreplacefuncs, 0);
+    register_builtin(SCRIPTINSTANCE_SERVER, "clearreplacefuncs",
+                     gscr_clearreplacefuncs, 0);
 
     // Player name/tag overrides (server-only)
-    register_builtin("setname", gscr_setname::func, 2);
-    register_builtin("setname", gscr_setname::method, 1);
-    register_builtin("settag", gscr_settag::func, 2);
-    register_builtin("settag", gscr_settag::method, 1);
-    register_builtin("resetname", gscr_resetname::func, 1);
-    register_builtin("resetname", gscr_resetname::method, 0);
-    register_builtin("resettag", gscr_resettag::func, 1);
-    register_builtin("resettag", gscr_resettag::method, 0);
-    register_builtin("setclientdvar", gscr_setclientdvar::func, 2);
-    register_builtin("setclientdvar", gscr_setclientdvar::method, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "setname", gscr_setname::func, 2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "setname", gscr_setname::method, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "settag", gscr_settag::func, 2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "settag", gscr_settag::method, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "resetname", gscr_resetname::func,
+                     1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "resetname", gscr_resetname::method,
+                     0);
+    register_builtin(SCRIPTINSTANCE_SERVER, "resettag", gscr_resettag::func, 1);
+    register_builtin(SCRIPTINSTANCE_SERVER, "resettag", gscr_resettag::method,
+                     0);
+    register_builtin(SCRIPTINSTANCE_SERVER, "setclientdvar",
+                     gscr_setclientdvar::func, 2);
+    register_builtin(SCRIPTINSTANCE_SERVER, "setclientdvar",
+                     gscr_setclientdvar::method, 1);
 
     register_builtin("conststring", gscr_conststring, 1);
     register_builtin("isstruct", gscr_isstruct, 1);
+    register_builtin("typename", gscr_typename, 1);
     register_builtin("ismenucached", gscr_ismenucached, 1);
     register_builtin("vector", gscr_vector, 0, 3);
 

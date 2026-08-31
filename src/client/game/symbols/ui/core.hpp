@@ -6,16 +6,16 @@ namespace game {
 namespace ui {
 
 // UI
-WEAK symbol<void(int localClientNumber, errorCode errorcode,
+WEAK symbol<void(LocalClientNum_t localClientNumber, errorCode errorcode,
                  const char *errorMessage)>
     UI_OpenErrorPopupWithMessage{0x14228DEE0};
 WEAK symbol<void(bool frontend)> UI_CoD_Init{0x141F29010, 0x1404A0A50};
 WEAK symbol<void()> UI_CoD_LobbyUI_Init{0x141F2BD80, 0x1404A1F50};
 WEAK symbol<void()> UI_CoD_Shutdown{0x141F32E10, 0x0};
-WEAK symbol<void(const char *, const char *, int, lua::hks::lua_State *)>
+WEAK symbol<void(const char *, const char *, int32_t, lua::hks::lua_State *)>
     UI_AddMenu{0x1427018F0, 0x0};
-WEAK symbol<const char *(int)> UI_CoD_GetRootNameForController{0x141F28940,
-                                                               0x0};
+WEAK symbol<const char *(int32_t)> UI_CoD_GetRootNameForController{0x141F28940,
+                                                                   0x0};
 WEAK symbol<UIModelIndex(live::settings::ProfileSetting setting,
                          ControllerIndex_t controllerIndex)>
     UI_Model_GetProfileModelForController{0x14164E990};
@@ -39,6 +39,9 @@ WEAK symbol<bool(const UIModelIndex nodeIndex, const char *newValue)>
     UI_Model_SetString{0x142019DB0};
 WEAK symbol<bool(const UIModelIndex nodeIndex, uint64_t newValue)>
     UI_Model_SetUInt64{0x142019EB0};
+WEAK symbol<void(LocalClientNum_t localClientNum)> UI_CloseAllMenus{
+    0x14228B0E0};
+WEAK symbol<void()> UI_Shutdown{0x14270DE00};
 
 WEAK symbol<void(const char *rootName)> UI_CoD_ProcessEvents{0x141F2DDA0};
 WEAK symbol<void(bool frontend)> UI_CoD_ShutdownAndInit{0x141F32F80};

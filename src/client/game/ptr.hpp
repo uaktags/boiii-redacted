@@ -1,9 +1,11 @@
 #pragma once
 
 #include "base.hpp"
+#include <macros.hpp>
 
 #include <cstdint>
 #include <intrin.h>
+#include <span>
 
 namespace game {
 
@@ -162,11 +164,48 @@ template <typename T> inline bool readable_ptr(const T *ptr) {
 }
 
 inline constexpr bool nonnull(uintptr_t ptr) {
-  return ptr > 0x000000100000000 && ptr < 0x00007FFFFFFFFFFF;
+  return ptr >= 0x00000000'00010000 && ptr <= 0x00007FFF'FFFFFFFF;
 }
 
 template <typename T> inline constexpr bool nonnull(const T *ptr) {
   return nonnull(reinterpret_cast<uintptr_t>(ptr));
+}
+
+template <IntegralLike<size_t> S>
+inline constexpr bool contains(const uintptr_t base, const S size,
+                               const uintptr_t cmp) {
+  return cmp >= base && cmp < base + static_cast<size_t>(size);
+}
+
+template <typename A, typename B, IntegralLike<size_t> S>
+inline constexpr bool contains(const A *base, const S size, const B *cmp) {
+  return contains<S>(reinterpret_cast<uintptr_t>(base), size,
+                     reinterpret_cast<uintptr_t>(cmp));
+}
+
+template <typename A, typename B>
+inline constexpr bool contains(const std::span<const A> base, const B *cmp) {
+  return contains<uint64_t>(reinterpret_cast<uintptr_t>(base.data()),
+                            base.size(), reinterpret_cast<uintptr_t>(cmp));
+}
+
+template <typename T, IntegralLike<T> Align>
+  requires(!std::is_pointer_v<T>)
+T align(T val, Align alignment) {
+  return (val + static_cast<T>(alignment) - 1) &
+         ~(static_cast<T>(alignment) - 1);
+}
+
+template <typename T, IntegralLike<uintptr_t> Align>
+const T *align(const T *val, Align alignment) {
+  return reinterpret_cast<const T *>(
+      align<uintptr_t, Align>(reinterpret_cast<uintptr_t>(val), alignment));
+}
+
+template <typename T, IntegralLike<uintptr_t> Align>
+T *align(T *val, Align alignment) {
+  return reinterpret_cast<T *>(
+      align<uintptr_t, Align>(reinterpret_cast<uintptr_t>(val), alignment));
 }
 } // namespace game
 

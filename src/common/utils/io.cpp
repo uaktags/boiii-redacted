@@ -32,29 +32,6 @@ bool file_exists(const std::filesystem::path &file) {
   return std::ifstream(file).good();
 }
 
-bool write_file(const std::filesystem::path &file, const std::string &data,
-                const bool append) {
-  if (file.has_parent_path()) {
-    const std::filesystem::path parent = file.parent_path();
-    utils::io::create_directory(parent);
-  }
-
-  int32_t flags = std::ios::binary | std::ofstream::out;
-  if (append) {
-    flags |= std::ofstream::app;
-  }
-  std::ofstream stream(file, flags);
-
-  if (stream.is_open()) {
-    stream.write(data.data(), static_cast<std::streamsize>(data.size()));
-    stream.flush();
-    stream.close();
-    return true;
-  }
-
-  return false;
-}
-
 bool write_file_bytes(const std::filesystem::path &file, const uint8_t *data,
                       size_t size, const bool append) {
   if (file.has_parent_path()) {
@@ -121,15 +98,7 @@ std::size_t file_size(const std::filesystem::path &file) {
 }
 
 bool create_directory(const std::filesystem::path &directory) {
-  try {
-    return std::filesystem::create_directories(directory);
-  } catch (const std::filesystem::filesystem_error &ex) {
-    std::cerr << "Caught standard filesystem error!\n";
-    std::cerr << "What:  " << ex.what() << '\n'; // Human-readable error message
-    std::cerr << "Path1: " << ex.path1()
-              << '\n'; // The path that caused the failure
-    return false;
-  }
+  return std::filesystem::create_directories(directory);
 }
 
 bool directory_exists(const std::filesystem::path &directory) {
@@ -167,15 +136,18 @@ list_files(const std::filesystem::path &directory, const bool recursive,
   std::vector<std::filesystem::path> files;
 
   if (recursive) {
-    for (auto &file :
+    for (const std::filesystem::directory_entry &file :
          std::filesystem::recursive_directory_iterator(directory, code)) {
-      if (include_directories || !file.is_directory())
+      if (include_directories || !file.is_directory()) {
         files.push_back(file.path());
+      }
     }
   } else {
-    for (auto &file : std::filesystem::directory_iterator(directory, code)) {
-      if (include_directories || !file.is_directory())
+    for (const std::filesystem::directory_entry &file :
+         std::filesystem::directory_iterator(directory, code)) {
+      if (include_directories || !file.is_directory()) {
         files.push_back(file.path());
+      }
     }
   }
 

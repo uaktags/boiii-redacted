@@ -1,6 +1,7 @@
 #pragma once
 
 // Re-export common structs
+#include "scr/scr.hpp"         // IWYU pragma: export
 #include <structs/structs.hpp> // IWYU pragma: export
 #include "core.hpp"            // IWYU pragma: export
 #include "fp16.hpp"            // IWYU pragma: export
@@ -10,7 +11,6 @@
 #include "jq.hpp"              // IWYU pragma: export
 #include "quake/quake.hpp"     // IWYU pragma: export
 #include "snd/snd.hpp"         // IWYU pragma: export
-#include "scr/scr.hpp"         // IWYU pragma: export
 #include "bg/bg.hpp"           // IWYU pragma: export
 #include "math.hpp"            // IWYU pragma: export
 #include "fs.hpp"              // IWYU pragma: export
@@ -31,13 +31,11 @@
 #include "db/db.hpp"           // IWYU pragma: export
 #include "cl.hpp"              // IWYU pragma: export
 #include "ui/ui.hpp"           // IWYU pragma: export
+#include "lua/lua.hpp"         // IWYU pragma: export
 #include "cmd.hpp"             // IWYU pragma: export
 #include "cg.hpp"              // IWYU pragma: export
 #include "steam.hpp"           // IWYU pragma: export
 #include "stream.hpp"          // IWYU pragma: export
-#include "array.hpp"           // IWYU pragma: export
-#include "atomic.hpp"          // IWYU pragma: export
-#include "str.hpp"             // IWYU pragma: export
 #include "macros.hpp"          // IWYU pragma: export
 #include "sv.hpp"              // IWYU pragma: export
 #include "ugc.hpp"             // IWYU pragma: export

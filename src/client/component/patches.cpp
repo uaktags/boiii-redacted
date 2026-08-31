@@ -12,11 +12,12 @@
 #ifndef NDEBUG
 #include <game/impl/snd/snd.hpp>
 #endif
+#include <component/gsc/gsc.hpp>
 
 namespace script {
 std::string resolve_hash(uint32_t hash);
-int resolve_hash_line(uint32_t hash, int num_params = -1);
-std::string get_source_line(const std::string &file, int line_num);
+int resolve_hash_line(uint32_t hash, int32_t num_params = -1);
+std::string get_source_line(const std::string &file, int32_t line_num);
 } // namespace script
 
 namespace patches {
@@ -121,7 +122,8 @@ void Sys_Error_LogCaller(const char *fmt, ...) {
   fflush(stderr);
   game::trace("[Sys_Error] Called from 0x%p with message: \"%s\"",
               game::derelocate(callerAddr), msg);
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT,
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT,
                         "[Sys_Error] Called from 0x%p with message: \"%s\"",
                         game::derelocate(callerAddr), msg);
   if (game::is_server() && server_restart::restart_pending.load()) {
@@ -136,7 +138,7 @@ void Sys_Error_LogCaller(const char *fmt, ...) {
 #define MINUTE 60 * SECOND
 #define HOUR 60 * MINUTE
 
-void com_error_stub(const char *file, int line, game::errorParm code,
+void com_error_stub(const char *file, int32_t line, game::errorParm code,
                     const char *fmt, ...) {
   void *callerAddr = _ReturnAddress();
   va_list ap;
@@ -151,16 +153,14 @@ void com_error_stub(const char *file, int line, game::errorParm code,
   if (msg == nullptr || msg[0] == '\0') {
     msg = "No message provided!";
   }
-  fprintf(stderr,
-          "[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
-          game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
-  fflush(stderr);
-  game::trace("[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
-              game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
-  game::com::Com_Printf(
-      0, game::consoleLabel_e::DEFAULT,
-      "ComError called from 0x%p with message: \"%s\", code: %d\n",
+  const char *log = utils::string::va(
+      "[Com_Error] Called from 0x%p with message: \"%s\", code: %d\n",
       game::derelocate(callerAddr), msg, static_cast<int32_t>(code));
+  fprintf(stderr, "%s\n", log);
+  fflush(stderr);
+  game::trace("%s", log);
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s\n", log);
   static bool suppress_next_lua_error = false;
   static bool client_script_error_pending = false;
 
@@ -252,18 +252,11 @@ void com_error_stub(const char *file, int line, game::errorParm code,
           if (!resolved_name.empty())
             func = resolved_name;
         } else {
-          // func was already resolved to a name - hash it back
-          uint32_t h = 0x4B9ACE2F;
-          for (char c : func)
-            h = (static_cast<uint32_t>(
-                     std::tolower(static_cast<unsigned char>(c))) ^
-                 h) *
-                0x1000193;
-          h *= 0x1000193;
-          func_hash = h;
+          func_hash = gsc::gsc_hash(func);
         }
-        int num_params_int = params.empty() ? -1 : std::atoi(params.c_str());
-        int src_line = script::resolve_hash_line(func_hash, num_params_int);
+        int32_t num_params_int =
+            params.empty() ? -1 : std::atoi(params.c_str());
+        int32_t src_line = script::resolve_hash_line(func_hash, num_params_int);
 
         printf("^1  Function:  ^5%s^1(%s)\n", func.c_str(), params.c_str());
         printf("^1  Reason:    ^1Unresolved external (function not found)\n");
@@ -314,11 +307,12 @@ void com_error_stub(const char *file, int line, game::errorParm code,
           [deferred_error]() {
             client_script_error_pending = false;
             if (game::com::Com_IsInGame())
-              game::cbuf::Cbuf_AddText(0, "disconnect\n");
+              game::cbuf::Cbuf_AddText(game::LOCAL_CLIENT_0, "disconnect\n");
             scheduler::once(
                 [deferred_error]() {
                   game::ui::UI_OpenErrorPopupWithMessage(
-                      0, game::errorCode::NONE, deferred_error.c_str());
+                      game::LOCAL_CLIENT_0, game::errorCode::NONE,
+                      deferred_error.c_str());
                 },
                 scheduler::pipeline::main, 500ms);
           },
@@ -332,22 +326,12 @@ void com_error_stub(const char *file, int line, game::errorParm code,
            buffer);
   }
 
-  // Suppress Clientfield Mismatch errors - convert to a recoverable ERR_DROP
-  if (strstr(buffer, "Clientfield Mismatch")) {
-    printf("[Com_Error] Suppressing Clientfield Mismatch error, converting to "
-           "ERR_DROP\n");
-    com_error_hook.invoke<void>(file, line, game::errorParm::DROP,
-                                "Mod compatibility issue: %s\nThis mod may "
-                                "require additional patches for boiii.",
-                                buffer);
-    return;
-  }
-
   if (!game::is_server() && code == game::errorParm::DROP) {
     std::string deferred_error = std::string(buffer);
     scheduler::once(
         [deferred_error]() {
-          game::ui::UI_OpenErrorPopupWithMessage(0, game::errorCode::NONE,
+          game::ui::UI_OpenErrorPopupWithMessage(game::LOCAL_CLIENT_0,
+                                                 game::errorCode::NONE,
                                                  deferred_error.c_str());
         },
         scheduler::pipeline::main, 500ms);
@@ -365,8 +349,8 @@ void com_error_stub(const char *file, int line, game::errorParm code,
 
     scheduler::once(
         [msg]() {
-          game::ui::UI_OpenErrorPopupWithMessage(0, game::errorCode::NONE,
-                                                 msg.c_str());
+          game::ui::UI_OpenErrorPopupWithMessage(
+              game::LOCAL_CLIENT_0, game::errorCode::NONE, msg.c_str());
         },
         scheduler::pipeline::main, 500ms);
 
@@ -435,8 +419,8 @@ void PhysPrint_AllOutputs(const char *fmt, ...) {
   fprintf(stdout, "%s\n", formatted_msg);
   fflush(stdout);
 
-  game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s\n",
-                        formatted_msg);
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "%s\n", formatted_msg);
   game::trace("%s", formatted_msg);
 }
 #endif

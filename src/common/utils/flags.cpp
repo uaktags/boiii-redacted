@@ -14,12 +14,6 @@ argparse::ArgumentParser program("boiii");
 
 #ifndef NDEBUG
 inline void add_debug_profile_arguments() {
-  program.add_argument("-alias", "--alias")
-      .help("For development: use a different key for XUID generation, "
-            "allowing two local clients (the first launched without this flag) "
-            "to connect to the same server.")
-      .default_value(false)
-      .implicit_value(true);
   program
       .add_argument("-d", "-debug", "--debug", "-t", "-trace", "--trace",
                     "-tracing", "--tracing")
@@ -97,6 +91,10 @@ int32_t parse_flags(int argc, char *argv[]) {
       .help("Launch in windowed mode")
       .default_value(false)
       .implicit_value(true);
+  program.add_argument("-borderless", "--borderless")
+      .help("Launch in borderless fullscreen mode")
+      .default_value(false)
+      .implicit_value(true);
   program.add_argument("-lan-local-test", "--lan-local-test")
       .help("Allow LAN System Link peers on this machine's own IPv4 address; "
             "intended only for isolated multi-instance testing")
@@ -141,10 +139,6 @@ int32_t parse_flags(int argc, char *argv[]) {
       .implicit_value(true);
   program.add_argument("-headless", "--headless")
       .help("Run in headless mode (no GUI)")
-      .default_value(false)
-      .implicit_value(true);
-  program.add_argument("-nopatch", "--nopatch")
-      .help("Disable selected runtime patches")
       .default_value(false)
       .implicit_value(true);
   program.add_argument("-plugins", "--plugins")
@@ -231,6 +225,38 @@ int32_t parse_flags(int argc, char *argv[]) {
       .help("Skip playing all cinematics.")
       .implicit_value(true)
       .default_value(false);
+  program.add_argument("-ls", "-log-script-errors", "--log-script-errors")
+      .help("Log all script errors, regardless of severity or `developer` dvar "
+            "value.")
+      .implicit_value(true)
+      .default_value(false);
+  program.add_argument("-ne", "-no-ext", "--no-ext")
+      .help("Disable load and usage of ext.dll.")
+      .implicit_value(true)
+      .default_value(false);
+  program.add_argument("-u", "-uw", "-ultrawide", "--ultrawide")
+      .help("Enable ultrawide UI scaling. Note: this is unstable and commonly "
+            "breaks UI alignment where implemented assuming <= 1920x1080 "
+            "aspect ratio.")
+      .implicit_value(true)
+      .default_value(false);
+  program
+      .add_argument("-c", "-cheats", "--cheats", "-enable-cheats",
+                    "--enable-cheats")
+      .help("Enable cheat dvar modification and cheat command execution. Note: "
+            "usage when hosting a private match in client or when running "
+            "dedicated server allows non-host players to execute cheat "
+            "commands (e.g. `god`, `noclip`) - use with caution.")
+      .implicit_value(true)
+      .default_value(false);
+  program.add_argument("-alias", "--alias")
+      .help("Use a different key for XUID generation, "
+            "allowing two local client instances (the first launched without "
+            "this flag) "
+            "to connect to the same server.")
+      .default_value(false)
+      .implicit_value(true);
+
 #ifndef NDEBUG
   add_debug_profile_arguments();
 #endif

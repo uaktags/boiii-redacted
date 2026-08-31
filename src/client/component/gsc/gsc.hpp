@@ -2,11 +2,12 @@
 
 #include <std_include.hpp>
 #include <game/structs/scr/scr.hpp>
+#include <frozen/unordered_set.h>
+#include <frozen/string.h>
+#include <str.hpp>
 
 namespace gsc {
 using namespace game::scr;
-
-constexpr uint64_t T7_MAGIC = 0x1C000A0D43534780;
 
 struct hash_name_pair {
   uint32_t hash;
@@ -15,24 +16,17 @@ struct hash_name_pair {
   uint8_t params;
 };
 
-// Special namespace that immediately indicates to engine's linker that this is
-// a builtin function
-constexpr const char *GSCR_SYS_NS = "sys";
-constexpr ScrVarCanonicalName_t GSCR_SYS_NS_HASH =
-    game::scr::builtin::fnv1a(GSCR_SYS_NS);
+inline constexpr frozen::string SCR_HASH_LITERAL_PREFIX_ARRAY[] = {
+    "hash", "var",    "variable", "id",        "function", "fn",
+    "func", "method", "meth",     "namespace", "ns"};
 
-inline constexpr std::string_view SCR_HASH_LITERAL_PREFIXES[] = {
-    "hash", "var",  "variable", "id",        "function",
-    "fn",   "func", "var",      "namespace", "ns"};
+inline constexpr frozen::unordered_set<frozen::string,
+                                       std::size(SCR_HASH_LITERAL_PREFIX_ARRAY)>
+    SCR_HASH_LITERAL_PREFIXES =
+        frozen::make_unordered_set(SCR_HASH_LITERAL_PREFIX_ARRAY);
 
 inline constexpr bool hash_literal_prefix(const std::string_view &s) {
-  for (uint32_t i = 0; i < ARRAYSIZE(SCR_HASH_LITERAL_PREFIXES); ++i) {
-    if (s == SCR_HASH_LITERAL_PREFIXES[i]) {
-      return true;
-    }
-  }
-
-  return false;
+  return SCR_HASH_LITERAL_PREFIXES.contains(s);
 }
 
 inline constexpr std::optional<ScrVarCanonicalName_t>
@@ -45,21 +39,32 @@ try_parse_raw_hash(const std::string_view &input) {
     const size_t underscoreIdx = inputSubstr.find('_');
     if (underscoreIdx != std::string::npos &&
         underscoreIdx < inputSubstr.size()) {
-
       const std::string_view prefix = inputSubstr.substr(0, underscoreIdx);
       if (hash_literal_prefix(prefix)) {
+        std::string_view hex_part = inputSubstr.substr(underscoreIdx + 1);
+        constexpr uint32_t EXPECTED_HEX_DIGITS =
+            sizeof(uint32_t) * 2 /* digits per byte */;
+        while (hex_part.size() > EXPECTED_HEX_DIGITS && hex_part[0] == '0') {
+          hex_part = hex_part.substr(1);
+        }
+        if (hex_part.size() > 0 && hex_part.size() <= EXPECTED_HEX_DIGITS) {
+          char padded_hex_part_buf[EXPECTED_HEX_DIGITS + 1 /* NULL */] = {
+              '0', '0', '0', '0', '0', '0', '0', '0', '\0'};
+          const size_t num_padding_bytes =
+              EXPECTED_HEX_DIGITS - hex_part.size();
+          strscpy(&padded_hex_part_buf[num_padding_bytes], hex_part.data(),
+                  hex_part.size() + 1 /* NULL */);
+          const std::string_view padded_hex_part = padded_hex_part_buf;
 
-        const std::string_view hex_part = inputSubstr.substr(underscoreIdx + 1);
-        if (hex_part.size() == 8) {
-
-          for (char c : hex_part) {
+          for (char c : padded_hex_part) {
             if (!std::isxdigit(static_cast<unsigned char>(c)))
               return std::nullopt;
           }
 
           ScrVarCanonicalName_t out = 0;
           auto [ptr, ec] = std::from_chars(
-              hex_part.data(), hex_part.data() + hex_part.size(), out, 16);
+              padded_hex_part.data(),
+              padded_hex_part.data() + padded_hex_part.size(), out, 16);
 
           if (ec == std::errc{} && out != 0) {
             return out;

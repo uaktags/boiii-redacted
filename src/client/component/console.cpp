@@ -5,6 +5,15 @@
 
 #include <game/game.hpp>
 #include "command.hpp"
+#include "component/lua_state.hpp"
+
+#if __has_include("version.hpp")
+#include "version.hpp"
+#else
+#ifndef SHORTVERSION
+#define SHORTVERSION "0"
+#endif
+#endif
 
 #include <utils/thread.hpp>
 #include <utils/hook.hpp>
@@ -63,11 +72,12 @@ std::atomic_bool dvar_list_loaded{false};
 std::atomic_bool dvar_list_loading{false};
 std::atomic_size_t dynamic_name_count{0};
 std::atomic_bool close_requested{false};
-bool buffer_ends_with_newline{true};
 HWND completion_hint_hwnd{nullptr};
 std::vector<std::string> tab_cycle_matches{};
 std::string tab_cycle_partial{};
 size_t tab_cycle_index{0};
+
+bool hide_external_console() { return utils::flags::has_flag("noconsole"); }
 
 std::vector<std::string> command_history{};
 size_t history_index{0};
@@ -267,6 +277,29 @@ void append_colored_text(const HWND richedit, const char *text, size_t len,
                reinterpret_cast<LPARAM>(wbuf.data()));
 }
 
+// RichEdit caches a wrap rectangle. Minimize or deleting from the start of
+// the document can leave it stuck at a tiny width.
+void refresh_richedit_layout(const HWND richedit) {
+  if (!richedit || !IsWindow(richedit)) {
+    return;
+  }
+
+  RECT rc{};
+  GetClientRect(richedit, &rc);
+  if ((rc.right - rc.left) <= 1 || (rc.bottom - rc.top) <= 1) {
+    return;
+  }
+
+  SendMessageW(richedit, EM_SETRECT, 0, reinterpret_cast<LPARAM>(&rc));
+}
+
+LONG line_start_from_char(const HWND richedit, const LONG index) {
+  const LONG line = static_cast<LONG>(
+      SendMessageW(richedit, EM_LINEFROMCHAR, static_cast<WPARAM>(index), 0));
+  return static_cast<LONG>(
+      SendMessageW(richedit, EM_LINEINDEX, static_cast<WPARAM>(line), 0));
+}
+
 void trim_console_buffer(const HWND richedit) {
   if (full_logs_enabled())
     return;
@@ -293,8 +326,8 @@ void trim_console_buffer(const HWND richedit) {
   }
 
   if (too_many_chars) {
-    cut_at =
-        (std::max)(cut_at, text_len - static_cast<LONG>(MAX_CONSOLE_CHARS / 2));
+    const LONG char_cut = text_len - static_cast<LONG>(MAX_CONSOLE_CHARS / 2);
+    cut_at = (std::max)(cut_at, line_start_from_char(richedit, char_cut));
   }
 
   if (cut_at <= 0 || cut_at >= text_len) {
@@ -311,6 +344,8 @@ void trim_console_buffer(const HWND richedit) {
   cr_end.cpMin = -1;
   cr_end.cpMax = -1;
   SendMessageW(richedit, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&cr_end));
+
+  refresh_richedit_layout(richedit);
 }
 
 struct run_accumulator {
@@ -392,24 +427,22 @@ void append_text_with_severity(const HWND richedit, const std::string &text) {
 
   static std::string run_buffer;
 
-  SendMessageW(richedit, WM_SETREDRAW, FALSE, 0);
-
+  // Read scroll state before WM_SETREDRAW; RichEdit can report nPage == 0
+  // while redraw is off, which looks like the user scrolled up.
   SCROLLINFO scroll_info{};
   scroll_info.cbSize = sizeof(scroll_info);
   scroll_info.fMask = SIF_ALL;
   GetScrollInfo(richedit, SB_VERT, &scroll_info);
   const bool was_at_bottom =
-      (scroll_info.nPos + static_cast<int32_t>(scroll_info.nPage) >=
-       scroll_info.nMax - 1) ||
-      scroll_info.nMax == 0;
+      scroll_info.nMax <= 0 ||
+      (scroll_info.nPos + static_cast<int32_t>(scroll_info.nPage) + 32 >=
+       scroll_info.nMax);
+
+  SendMessageW(richedit, WM_SETREDRAW, FALSE, 0);
 
   trim_console_buffer(richedit);
 
   run_accumulator acc(richedit, run_buffer);
-
-  if (!buffer_ends_with_newline) {
-    acc.add("\n", get_default_console_color());
-  }
 
   std::string_view remaining(text);
   while (!remaining.empty()) {
@@ -428,8 +461,6 @@ void append_text_with_severity(const HWND richedit, const std::string &text) {
   }
 
   acc.flush();
-
-  buffer_ends_with_newline = text.back() == '\n';
 
   if (was_at_bottom) {
     SendMessageW(richedit, WM_VSCROLL, SB_BOTTOM, 0);
@@ -891,8 +922,13 @@ void print_message(const char *message) {
   OutputDebugStringA(message);
 #endif
 
+#ifndef NDEBUG
+  game::trace("[printf] %s", message);
+#endif
+
   if (started.load(std::memory_order_seq_cst) && !terminate_runner) {
-    game::com::Com_Printf(0, game::consoleLabel_e::DEFAULT, "%s", message);
+    game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                          game::consoleLabel_e::DEFAULT, "%s", message);
   }
 }
 
@@ -1064,6 +1100,10 @@ void resize_console_controls(const HWND hwnd) {
     return;
   }
 
+  if (IsIconic(hwnd)) {
+    return;
+  }
+
   RECT rect{};
   GetClientRect(hwnd, &rect);
 
@@ -1074,6 +1114,10 @@ void resize_console_controls(const HWND hwnd) {
                  static_cast<int32_t>((rect.right - rect.left) - margin * 2));
   const int32_t client_height =
       (std::max)(0, static_cast<int32_t>((rect.bottom - rect.top)));
+
+  if (client_width <= 0 || client_height <= 0) {
+    return;
+  }
 
   int32_t logo_width = 0;
   int32_t logo_height = 0;
@@ -1099,6 +1143,7 @@ void resize_console_controls(const HWND hwnd) {
              buffer_height, TRUE);
   MoveWindow(*game::s_wcd::hwndInputLine, margin, input_y, client_width,
              input_height, TRUE);
+  refresh_richedit_layout(*game::s_wcd::hwndBuffer);
 
   if (completion_hint_hwnd && IsWindowVisible(completion_hint_hwnd)) {
     char hint_text[2048]{};
@@ -1139,7 +1184,9 @@ LRESULT con_wnd_proc(const HWND hwnd, const UINT msg, const WPARAM wparam,
     SetTextColor(reinterpret_cast<HDC>(wparam), get_default_console_color());
     return get_gray_brush();
   case WM_SIZE:
-    resize_console_controls(hwnd);
+    if (wparam != SIZE_MINIMIZED) {
+      resize_console_controls(hwnd);
+    }
     return 0;
   case WM_VSCROLL:
   case WM_MOUSEWHEEL:
@@ -1187,7 +1234,7 @@ LRESULT con_wnd_proc(const HWND hwnd, const UINT msg, const WPARAM wparam,
     if (!close_requested.exchange(true)) {
       ShowWindow(hwnd, SW_HIDE);
       force_exit_after(3000);
-      game::cbuf::Cbuf_AddText(0, "quit\n");
+      game::cbuf::Cbuf_AddText(game::LOCAL_CLIENT_0, "quit\n");
     }
     [[fallthrough]];
   default:
@@ -1284,9 +1331,19 @@ std::atomic_bool console_shown_once{false};
 void sys_show_console_stub() {
   if (!console_shown_once.exchange(true)) {
     sys_show_console_hook.invoke<void>();
+    if (hide_external_console() && *game::s_wcd::hWnd) {
+      ShowWindow(*game::s_wcd::hWnd, SW_HIDE);
+    }
     reset_tab_cycle();
     update_completion_hint("");
     restore_input_caret();
+    return;
+  }
+
+  if (hide_external_console()) {
+    if (*game::s_wcd::hWnd) {
+      ShowWindow(*game::s_wcd::hWnd, SW_HIDE);
+    }
     return;
   }
 
@@ -1311,8 +1368,9 @@ void sys_create_console_stub(const HINSTANCE h_instance) {
   char text[CONSOLE_BUFFER_SIZE]{0};
 
   const char *class_name = "BOIII WinConsole";
-  const char *window_name =
-      game::is_server() ? "BOIII Server" : "BOIII Console";
+  const char *window_name = game::is_server()
+                                ? "BOIII V" SHORTVERSION " - Server"
+                                : "BOIII V" SHORTVERSION " - Console";
 
   WNDCLASSA wnd_class{};
   wnd_class.style = 0;
@@ -1464,15 +1522,105 @@ void set_title(const std::string &title) {
   }
 }
 
+namespace lua {
+using namespace game::lua;
+using namespace game::lua::hks;
+
+void print(const std::string_view &msg) {
+#ifndef NDEBUG
+  game::trace("[Lua][Console] %s", msg.data());
+#endif
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "^7%s\n", msg.data());
+}
+
+void print_info(const std::string_view &msg) {
+#ifndef NDEBUG
+  game::trace("[Lua][Console][Info] %s", msg.data());
+#endif
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "^4%s^7\n", msg.data());
+}
+
+void print_error(const std::string_view &msg) {
+#ifndef NDEBUG
+  game::trace("[Lua][Console][Error] %s", msg.data());
+#endif
+
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "^1Error: %s^7\n",
+                        msg.data());
+}
+
+void print_warning(const std::string_view &msg) {
+#ifndef NDEBUG
+  game::trace("[Lua][Console][Warn] %s", msg.data());
+#endif
+  game::com::Com_Printf(game::consoleChannel_e::CHANNEL_DONT_FILTER,
+                        game::consoleLabel_e::DEFAULT, "^3%s^7\n", msg.data());
+}
+
+std::string concat_string_args(lua_State *s) {
+  std::string text;
+  for (hksInt32 i = 1; i <= lua_gettop(s); ++i) {
+    text += lua_tostring(s, i);
+  }
+  return text;
+}
+
+luaReturnCount_e print(lua_State *s) {
+
+  print(concat_string_args(s));
+  return luaReturnCount_e::ONE;
+}
+
+luaReturnCount_e print_info(lua_State *s) {
+  print_info(concat_string_args(s));
+  return luaReturnCount_e::ONE;
+}
+
+luaReturnCount_e print_error(lua_State *s) {
+  print_error(concat_string_args(s));
+  return luaReturnCount_e::ONE;
+}
+
+luaReturnCount_e print_warning(lua_State *s) {
+  print_warning(concat_string_args(s));
+  return luaReturnCount_e::ONE;
+}
+
+luaReturnCount_e show_external_console(lua_State *s) {
+  game::sys::Sys_ShowConsole();
+  return luaReturnCount_e::ONE;
+}
+
+void register_lua_libs() {
+  static constexpr const luaL_Reg ConsoleLibrary[] = {
+      {"Print", print},
+      {"PrintInfo", print_info},
+      {"PrintError", print_error},
+      {"PrintWarning", print_warning},
+      {"ShowExternalConsole", show_external_console},
+      {nullptr, nullptr},
+  };
+  lua_state::register_lib("Console", ConsoleLibrary);
+}
+
+} // namespace lua
+
 struct component final : generic_component {
   component() {
+    SetConsoleTitleA("EZZ BOIII V" SHORTVERSION);
+
     if (game::is_headless()) {
       if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
         AllocConsole();
         AttachConsole(GetCurrentProcessId());
       }
 
-      ShowWindow(GetConsoleWindow(), SW_SHOW);
+      SetConsoleTitleA("EZZ BOIII V" SHORTVERSION);
+      ShowWindow(GetConsoleWindow(),
+                 hide_external_console() ? SW_HIDE : SW_SHOW);
 
       FILE *fp;
       freopen_s(&fp, "CONIN$", "r", stdin);
@@ -1482,6 +1630,7 @@ struct component final : generic_component {
   }
 
   void post_unpack() override {
+    lua::register_lua_libs();
     if (utils::flags::has_flag("nologs")) {
       return;
     }
@@ -1521,12 +1670,9 @@ struct component final : generic_component {
 
             while (!current_queue.empty()) {
               const std::string &msg = current_queue.front();
-              if (!msg.empty()) {
-                if (!message_buffer.empty() && message_buffer.back() != '\n') {
-                  message_buffer.push_back('\n');
-                }
-                message_buffer.append(msg);
-              }
+              // status (and similar) prints one line as several Com_Printf
+              // fragments. Do not insert newlines between them.
+              message_buffer.append(msg);
               current_queue.pop();
             }
 

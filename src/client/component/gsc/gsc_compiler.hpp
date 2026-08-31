@@ -9,8 +9,8 @@ namespace gsc_compiler {
 struct compile_error {
   std::string message;
   std::string file;
-  int line;
-  int column;
+  int32_t line;
+  int32_t column;
 };
 
 struct replacefunc_entry {
@@ -26,12 +26,14 @@ struct replacefunc_entry {
 struct compile_result {
   bool success;
   std::vector<uint8_t> bytecode;
+  std::vector<uint8_t> gdb;
   std::vector<compile_error> errors;
   std::vector<gsc::hash_name_pair> hash_names;
   std::vector<replacefunc_entry> replacefuncs;
 };
 
 // Compile raw GSC source code to T7 PC bytecode.
-compile_result compile(const std::string &source,
+compile_result compile(game::scr::scriptInstance_t inst,
+                       const std::string &source,
                        const std::string &source_name);
 } // namespace gsc_compiler

@@ -31,7 +31,25 @@
 #pragma comment(lib, "dbghelp.lib")
 
 namespace exception {
+
 namespace {
+void exception_log(bool err, const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  int32_t buf_len = vsnprintf(nullptr, 0, fmt, args);
+
+  std::string buffer;
+  buffer.resize(buf_len + 1);
+  va_start(args, fmt);
+  vsnprintf(buffer.data(), buffer.size(), fmt, args);
+  va_end(args);
+
+  std::FILE *io = err ? stderr : stdout;
+  fprintf(io, "%s\n", buffer.c_str());
+  fflush(io);
+
+  game::trace("%s%s", err ? "[Error] " : "", buffer.c_str());
+}
 uint32_t main_thread_id{};
 std::once_flag sym_init_flag{};
 
@@ -168,7 +186,7 @@ qboolean WINAPI mini_dump_write_dump_stub(
     const PMINIDUMP_USER_STREAM_INFORMATION user_stream_param,
     const PMINIDUMP_CALLBACK_INFORMATION callback_param) {
   wchar_t filename[MAX_PATH];
-  if (GetFinalPathNameByHandleW(h_file, filename, ARRAYSIZE(filename),
+  if (GetFinalPathNameByHandleW(h_file, filename, std::size(filename),
                                 VOLUME_NAME_DOS)) {
     std::wstring path = filename;
     if (path.find(L"\\\\?\\") == 0) {
@@ -300,12 +318,13 @@ void reset_state() {
     scheduler::once(
         [] {
           if (game::com::Com_IsInGame())
-            game::cbuf::Cbuf_AddText(0, "disconnect\n");
+            game::cbuf::Cbuf_AddText(game::LOCAL_CLIENT_0, "disconnect\n");
         },
         scheduler::pipeline::main);
 
     game::com::Com_Printf(
-        0, game::consoleLabel_e::DEFAULT,
+        game::consoleChannel_e::CHANNEL_DONT_FILTER,
+        game::consoleLabel_e::DEFAULT,
         "%s (0x%08X) at %s\n\n"
         "A crash dump has been saved to:\n%s\n\n"
         "Ezz has tried to recover your game, but it may be unstable.\n\n"
@@ -738,9 +757,8 @@ LONG WINAPI crash_fix_exception_handler(PEXCEPTION_POINTERS exception_info) {
 
 #ifndef NDEBUG
   if (patch_name) {
-    fprintf(stderr, "^3[Exception] Known crash patched: %s (base+0x%llX)\n",
-            patch_name, offset);
-    fflush(stderr);
+    exception_log(true, "^3[Exception] Known crash patched: %s (base+0x%llX)",
+                  patch_name, offset);
   }
 #endif
 
@@ -816,19 +834,19 @@ LONG WINAPI exception_filter(const LPEXCEPTION_POINTERS exceptioninfo) {
       get_exception_string(exceptioninfo->ExceptionRecord->ExceptionCode);
 
   // Detailed console crash report
-  fprintf(stderr, "\n========== CRASH DETECTED ==========\n");
-  fprintf(stderr, "  Exception:  %s (0x%08lX)\n", exception_name,
-          exceptioninfo->ExceptionRecord->ExceptionCode);
-  fprintf(stderr, "  Module:     %s + 0x%llX\n",
-          crash_frame.module_name.c_str(), crash_frame.rva);
+  exception_log(true, "========== CRASH DETECTED ==========");
+  exception_log(true, "  Exception:  %s (0x%08lX)", exception_name,
+                exceptioninfo->ExceptionRecord->ExceptionCode);
+  exception_log(true, "  Module:     %s + 0x%llX",
+                crash_frame.module_name.c_str(), crash_frame.rva);
   if (!crash_frame.function_name.empty())
-    fprintf(stderr, "  Function:   %s\n", crash_frame.function_name.c_str());
+    exception_log(true, "  Function:   %s", crash_frame.function_name.c_str());
   if (!crash_frame.file_name.empty() && crash_frame.line_number > 0)
-    fprintf(stderr, "  Source:     %s:%u\n", crash_frame.file_name.c_str(),
-            crash_frame.line_number);
-  fprintf(stderr, "  Address:    0x%llX\n", crash_frame.address);
-  fprintf(stderr, "  Thread:     %lu (%s)\n", GetCurrentThreadId(),
-          is_game_thread() ? "main" : "auxiliary");
+    exception_log(true, "  Source:     %s:%u", crash_frame.file_name.c_str(),
+                  crash_frame.line_number);
+  exception_log(true, "  Address:    0x%llX", crash_frame.address);
+  exception_log(true, "  Thread:     %lu (%s)", GetCurrentThreadId(),
+                is_game_thread() ? "main" : "auxiliary");
 
   if (exceptioninfo->ExceptionRecord->ExceptionCode ==
       EXCEPTION_ACCESS_VIOLATION) {
@@ -837,32 +855,28 @@ LONG WINAPI exception_filter(const LPEXCEPTION_POINTERS exceptioninfo) {
             ? "write to"
             : "read from";
     uintptr_t target = exceptioninfo->ExceptionRecord->ExceptionInformation[1];
-    fprintf(stderr, "  Details:    Attempted to %s 0x%012llX%s\n", op, target,
-            target < 0x10000 ? " (NULL pointer dereference)" : "");
+    exception_log(true, "  Details:    Attempted to %s 0x%012llX%s", op, target,
+                  target < 0x10000 ? " (NULL pointer dereference)" : "");
   }
-
-  fflush(stderr);
 
   // Print condensed callstack to console
   std::vector<resolved_frame> frames = capture_stackwalk(exceptioninfo, 16);
   if (!frames.empty()) {
-    fprintf(stderr, "  Callstack:\n");
-    fflush(stderr);
+    exception_log(true, "  Callstack:");
     for (size_t i = 0; i < frames.size(); ++i) {
       const resolved_frame *f = &frames[i];
 
       if (!f->function_name.empty()) {
-        fprintf(stderr, "    [%zu] 0x%llX - %s!%s\n", i, f->address,
-                f->module_name.c_str(), f->function_name.c_str());
+        exception_log(true, "    [%zu] 0x%llX - %s!%s", i, f->address,
+                      f->module_name.c_str(), f->function_name.c_str());
       } else {
-        fprintf(stderr, "    [%zu] 0x%llX - %s + 0x%llX\n", i, f->address,
-                f->module_name.c_str(), f->rva);
+        exception_log(true, "    [%zu] 0x%llX - %s + 0x%llX", i, f->address,
+                      f->module_name.c_str(), f->rva);
       }
       fflush(stderr);
     }
   }
-  fprintf(stderr, "=====================================\n\n");
-  fflush(stderr);
+  exception_log(true, "=====================================");
 
   if (!game::is_server()) {
     const std::string crash_info = generate_crash_info(exceptioninfo);

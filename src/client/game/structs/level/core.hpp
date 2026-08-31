@@ -1674,7 +1674,7 @@ struct entityState_s {
   uint8_t _padding1EA[6];
 };
 constexpr uint32_t ENTITYSTATE_CLIENTMASK_BITS =
-    bits<decltype(entityState_s::clientMask)>();
+    bitsizeof<decltype(entityState_s::clientMask)>();
 
 typedef entityState_s entityState_t;
 #pragma pack(pop)
@@ -1685,6 +1685,7 @@ ASSERT_OFFSET(entityState_t, loopSound, ENTITYSTATE_LOOPSOUND_OFFSET);
 ASSERT_OFFSET(entityState_t, clientMask, ENTITYSTATE_CLIENTMASK_OFFSET);
 ASSERT_OFFSET(entityState_t, otherEntityNum, ENTITYSTATE_OTHERENTITYNUM_OFFSET);
 ASSERT_OFFSET(entityState_t, un3, ENTITYSTATE_UN3_OFFSET);
+ASSERT_OFFSET(entityState_t, renderOptions, 0xE8);
 
 #pragma pack(push, 1)
 struct entityShared_t {

@@ -8,6 +8,7 @@
 #include "../network.hpp"
 #include "../scheduler.hpp"
 #include "../server_list.hpp"
+#include <component/game_event.hpp>
 
 #include <utils/hook.hpp>
 
@@ -52,7 +53,7 @@ void trigger_map_rotation() {
   scheduler::once(
       [] {
         if (!game::maprotation().value_or("").empty()) {
-          game::cbuf::Cbuf_AddText(0, "map_rotate\n");
+          game::sv::SV_MapRotate_f();
           send_heartbeat();
         }
       },
@@ -69,6 +70,7 @@ struct component final : server_component {
     utils::hook::call(0x14052A8CF_g, sv_con_tell_f_stub);
 
     scheduler::once(send_heartbeat, scheduler::pipeline::main);
+    game_event::on_g_init_game(send_heartbeat);
     scheduler::loop(send_heartbeat, scheduler::pipeline::main, 5min);
     ::command::add("heartbeat", send_heartbeat);
     register_server_compatibility_commands();
